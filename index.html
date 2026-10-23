@@ -3195,7 +3195,9 @@ async function buildNotesIndex(){
     let logs=isMgrRole()?await fbQuery('logs'):await fbQuery('logs',where('submittedByUid','==',session.uid));
     logs=byNewest(logs,'date').slice(0,40);
     const unreadBy={};notesUnread.forEach(x=>{unreadBy[x.loadId]=(unreadBy[x.loadId]||0)+1;});
-    if(!logs.length){box.innerHTML='<div class="empty"><div class="empty-icon">📝</div><h3>No loads yet</h3><p style="color:var(--ink3)">Notes belong to a load. Start a Morning Load first.</p></div>';return;}
+    if(!logs.length){box.innerHTML=isMgrRole()
+      ?'<div class="empty"><div class="empty-icon">📝</div><h3>No loads yet</h3><p style="color:var(--ink3)">Each load gets its own notes. Loads appear here as soon as a crew confirms a Morning Load.</p></div>'
+      :'<div class="empty"><div class="empty-icon">📝</div><h3>No loads yet</h3><p style="color:var(--ink3);margin-bottom:14px">Notes belong to a load. Start your Morning Load first.</p><button class="btn btn-gold" onclick="showScreen(\'s-load\')">Start Morning Load →</button></div>';return;}
     box.innerHTML=logs.map(l=>{const u=unreadBy[l.fid]||0;return `<div class="nload" onclick="openNotes(${ja(l.fid)})">
       <div class="kpi-ic" style="background:var(--blue-l);color:var(--blue)"><i class="ti ti-truck"></i></div>
       <div style="flex:1;min-width:0"><div style="font-weight:700">Truck ${h(l.truck||'—')} · ${h(docNumber(l))}</div>
