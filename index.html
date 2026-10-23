@@ -14,7 +14,7 @@ import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
-  collection, query, where, orderBy, serverTimestamp, writeBatch }
+  collection, query, where, orderBy, serverTimestamp, writeBatch, onSnapshot }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -34,7 +34,7 @@ const db   = getFirestore(app);
 // account in a separate, temporary Firebase instance without being signed out.
 window._fb = { auth, db, createUserWithEmailAndPassword, signInWithEmailAndPassword,
   signOut, onAuthStateChanged, updatePassword, doc, setDoc, getDoc, getDocs, addDoc, updateDoc,
-  deleteDoc, collection, query, where, orderBy, serverTimestamp, writeBatch,
+  deleteDoc, collection, query, where, orderBy, serverTimestamp, writeBatch, onSnapshot,
   initializeApp, getAuth, deleteApp, firebaseConfig };
 window._fbReady = true;
 document.dispatchEvent(new Event('fbReady'));
@@ -282,6 +282,22 @@ body.authed .sidebar{display:flex}
 .nav-item i{font-size:21px}
 .nav-item:hover{background:rgba(255,255,255,.05);color:#fff}
 .nav-item.active{background:var(--accent);color:var(--on-accent)}
+.note{border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px;background:var(--card)}
+.note.mine{border-color:rgba(201,162,39,.35)}
+.note.unread{box-shadow:0 0 0 2px var(--accent) inset}
+.note-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;color:var(--ink3);margin-bottom:6px}
+.note-h b{color:var(--ink);font-size:13px}
+.note-t{font-size:15px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.note-req{font-size:13px;color:var(--ink2);margin-top:6px}
+.note-seen{font-size:12px;color:var(--ink3);margin-top:8px}
+.ntype{font-size:10px;font-weight:800;letter-spacing:.6px;padding:3px 8px;border-radius:12px;text-transform:uppercase}
+.ntype-change{background:var(--gold-l);color:var(--gold-d)}
+.ntype-note{background:var(--blue-l);color:var(--blue-t)}
+.ntype-message{background:var(--purple-l);color:var(--purple)}
+.nload{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;margin-bottom:8px;background:var(--card);cursor:pointer}
+.nload:hover{border-color:var(--accent)}
+.ptbl.notes td{font-family:inherit!important;font-weight:400!important;font-size:11px!important;text-align:left!important;white-space:normal;vertical-align:top}
+.ptbl.notes th{text-align:left!important}
 .nav-badge{margin-left:auto;min-width:22px;height:22px;border-radius:11px;background:var(--red);color:#2A0603;font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;padding:0 6px}
 .side-user{display:flex;align-items:center;gap:10px;padding:12px 8px;margin-top:10px;border-top:1px solid #22324F;color:#B9C0CC}
 .side-user i{font-size:30px;color:var(--accent)}
@@ -336,7 +352,7 @@ body.authed .sidebar{display:flex}
 /* PRINT (always light, on paper) */
 @media print{
   body{background:#fff;color:#1a1a1a;padding:0}
-  .topbar,.sidebar,.nav-scrim,.offline-banner,.no-print,#send-modal,#qr-modal,#job-modal{display:none!important}
+  .topbar,.sidebar,.nav-scrim,.offline-banner,.no-print,#send-modal,#qr-modal,#job-modal,#toast{display:none!important}
   body.authed{padding-left:0}
   .print-sheet{display:block!important}
   .screen{display:none!important}
@@ -386,7 +402,7 @@ body.authed .sidebar{display:flex}
     <div class="logo"><b>29Cyber</b> CrewTrack<span id="tb-company"></span></div></div>
   <div class="tb-title" id="tb-title"></div>
   <div class="tb-right">
-    <button class="icon-btn bell-btn" id="bell-btn" onclick="showScreen('s-admin')" aria-label="Pending approvals" style="display:none"><i class="ti ti-bell"></i><span class="dot" id="bell-count"></span></button>
+    <button class="icon-btn bell-btn" id="bell-btn" onclick="bellClick()" aria-label="Notifications" style="display:none"><i class="ti ti-bell"></i><span class="dot" id="bell-count"></span></button>
     <div class="tb-user"><strong id="tb-name"></strong><span id="tb-role"></span></div>
     <button class="icon-btn sun-btn" id="sun-btn" onclick="toggleTheme()" aria-label="Sun mode (light screen)" title="Sun mode"><i class="ti ti-sun"></i></button>
   </div>
@@ -487,6 +503,7 @@ body.authed .sidebar{display:flex}
 <div class="screen" id="s-dash">
   <div class="page-title">Today</div>
   <div class="page-sub" id="dash-date"></div>
+  <div id="notes-alert"></div>
 
   <!-- Manager overview (managers and Big Boss only) -->
   <div id="mgr-dash" style="display:none">
@@ -526,6 +543,7 @@ body.authed .sidebar{display:flex}
     <div class="sec-label">Jobs Today</div>
     <div id="dash-jobs-list"></div>
 
+    <button class="btn btn-outline btn-full" style="margin-bottom:8px" onclick="openNotes(todayLoad&&todayLoad.fid)"><i class="ti ti-message-2"></i> Notes / Change order</button>
     <!-- Add job button -->
     <button class="btn btn-gold btn-full" id="dash-add-job-btn" onclick="openJobModal()">+ Add Job / Close Job</button>
 
@@ -779,6 +797,14 @@ body.authed .sidebar{display:flex}
   <div id="hist-list"></div>
 </div>
 
+<!-- ══ NOTES (change orders, field notes, messages; one thread per load) ══ -->
+<div class="screen" id="s-notes">
+  <div class="page-title">Notes</div>
+  <div class="page-sub">Change orders, field notes and messages for each load. Notes cannot be edited or deleted.</div>
+  <div id="notes-index"></div>
+  <div id="notes-thread" style="display:none"></div>
+</div>
+
 <!-- ══ INVENTORY ══════════════════════════════════════════════════ -->
 <div class="screen" id="s-inventory">
   <div class="page-title">Inventory</div>
@@ -917,6 +943,7 @@ body.authed .sidebar{display:flex}
     <button class="nav-item" id="bn-load" onclick="showScreen('s-load')"><i class="ti ti-truck-loading"></i><span>Load</span></button>
     <button class="nav-item" id="bn-return" onclick="showScreen('s-return')"><i class="ti ti-arrow-back-up"></i><span>Return</span></button>
     <button class="nav-item" id="bn-history" onclick="showScreen('s-history')"><i class="ti ti-history"></i><span>History</span></button>
+    <button class="nav-item" id="bn-notes" onclick="showScreen('s-notes')"><i class="ti ti-message-2"></i><span>Notes</span><span class="nav-badge" id="notes-badge" style="display:none"></span></button>
     <button class="nav-item" id="bn-inventory" onclick="showScreen('s-inventory')"><i class="ti ti-building-warehouse"></i><span>Stock</span></button>
     <button class="nav-item" id="bn-admin" style="display:none" onclick="showScreen('s-admin')"><i class="ti ti-settings"></i><span>Admin</span></button>
   </nav>
@@ -1088,7 +1115,7 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // Firestore document config/company, which only 29 Cyber edits, in the
 // Firebase console (the security rules block every write from the app).
 // No document = the app and its printed sheets show the 29 Cyber brand.
-const APP={name:'29Cyber CrewTrack',version:'2.1.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'2.2.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
   crewDomain:'crew.dgk.internal'   // crew sign-in: <Employee ID>@<crewDomain>
 };
@@ -1207,15 +1234,16 @@ async function fbQuery(col,...constraints){const{db,collection,query,getDocs}=fb
 function showScreen(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   el(id).classList.add('active');
-  ['bn-dash','bn-load','bn-return','bn-history','bn-inventory','bn-admin'].forEach(b=>{const e=el(b);if(e)e.classList.remove('active');});
-  const map={'s-dash':'bn-dash','s-load':'bn-load','s-return':'bn-return','s-history':'bn-history','s-inventory':'bn-inventory','s-admin':'bn-admin'};
+  ['bn-dash','bn-load','bn-return','bn-history','bn-notes','bn-inventory','bn-admin'].forEach(b=>{const e=el(b);if(e)e.classList.remove('active');});
+  const map={'s-dash':'bn-dash','s-load':'bn-load','s-return':'bn-return','s-history':'bn-history','s-notes':'bn-notes','s-inventory':'bn-inventory','s-admin':'bn-admin'};
   if(map[id]&&el(map[id]))el(map[id]).classList.add('active');
-  const titles={'s-dash':'Dashboard','s-load':'Morning Load','s-return':'End of Day Return','s-history':'History','s-inventory':'Stock','s-admin':'Admin'};
+  const titles={'s-dash':'Dashboard','s-load':'Morning Load','s-return':'End of Day Return','s-history':'History','s-notes':'Notes','s-inventory':'Stock','s-admin':'Admin'};
   if(el('tb-title'))el('tb-title').textContent=titles[id]||'';
   toggleNav(false);window.scrollTo(0,0);
   if(id==='s-dash') buildDash();
   if(id==='s-return') buildReturnScreen();
   if(id==='s-history') buildHistory();
+  if(id==='s-notes') buildNotesIndex();
   if(id==='s-inventory') buildInventory();
   if(id==='s-admin') buildAdminPanel();
 }
@@ -1463,6 +1491,7 @@ async function _afterLogin(user){
     const now=new Date();el('job-date').value=now.toISOString().split('T')[0];
     el('dash-date').textContent=today();
     await Promise.all([loadAppConfig(),loadCompany()]);
+    startNotesWatch();
     await syncOfflineQueue();
     // Restore today's load from localStorage
     try{
@@ -1488,7 +1517,7 @@ async function _afterLogin(user){
 }
 
 async function doLogout(){
-  session=null;CUSTOMER=null;applyBrand();todayLoad=null;todayJobs=[];crewList=[];selColors=[];extraMats=[];fpItems=[];recipients=[];
+  stopNotesWatch();session=null;CUSTOMER=null;applyBrand();todayLoad=null;todayJobs=[];crewList=[];selColors=[];extraMats=[];fpItems=[];recipients=[];
   try{await fb().signOut(fb().auth);}catch(e){}
   document.body.classList.remove('authed','nav-open');
   if(el('bell-btn'))el('bell-btn').style.display='none';
@@ -1933,8 +1962,7 @@ async function buildMgrDash(){
     const fmtD=d=>{const t=new Date(d);return isNaN(t)?'—':t.toLocaleDateString('en-US',{month:'short',day:'numeric'});};
     el('mgr-recent').innerHTML=recent.length?`<table class="dtbl"><tr><th>Date</th><th>Truck</th><th>Job ID</th><th>By</th><th>Status</th></tr>${recent.map(l=>`<tr class="click" onclick="showScreen('s-history')"><td>${fmtD(l.date)}</td><td style="font-weight:700">${h(l.truck||'—')}</td><td>${h(l.jobId||'—')}</td><td>${h(l.submittedBy||'—')}</td><td>${statusChip(l)}</td></tr>`).join('')}</table>`
       :'<div style="color:var(--ink3);font-size:14px;padding:10px 0">No loads yet.</div>';
-    const bell=el('bell-btn'),bc=el('bell-count');
-    if(bell){bell.style.display='flex';bc.textContent=pendLoads+pendUsers;bc.style.display=(pendLoads+pendUsers)?'flex':'none';}
+    pendCount=pendLoads+pendUsers;updateBell();
   }catch(e){k.innerHTML='<div class="alert a-err" style="grid-column:1/-1"><span class="ai">⚠️</span><div>Could not load the overview. Check your connection.</div></div>';}
 }
 // Same stock math as the Stock screen: receipts in, loads out, returns back in.
@@ -2596,9 +2624,11 @@ function rCardHTML(log,isAdmin){
     ?`${log.status!=='approved'?`<button class="btn btn-green btn-sm" onclick="approveLog(${ja(fid)},this)">✓ Approve</button>`:''}
        <button class="btn btn-outline btn-sm" onclick="openSendModalById(${ja(fid)})">📤</button>
        <button class="btn btn-dark btn-sm" onclick="printLogById(${ja(fid)})">🖨️</button>
+       <button class="btn btn-outline btn-sm" onclick="openNotes(${ja(fid)})">📝 Notes</button>
        <button class="btn btn-red btn-sm" onclick="deleteLog(${ja(fid)})">🗑</button>`
     :`<button class="btn btn-outline btn-sm" onclick="openSendModalById(${ja(fid)})">📤</button>
-      <button class="btn btn-dark btn-sm" onclick="printLogById(${ja(fid)})">🖨️</button>`;
+      <button class="btn btn-dark btn-sm" onclick="printLogById(${ja(fid)})">🖨️</button>
+      <button class="btn btn-outline btn-sm" onclick="openNotes(${ja(fid)})">📝 Notes</button>`;
   return `<div class="rcard" id="rcard-${h(fid)}">
     <div class="rcard-hdr"><div>
       <div class="rcard-title">🚛 Truck ${h(log.truck)}</div>
@@ -3100,6 +3130,187 @@ async function buildPrintSelector(){
   }catch(e){}
 }
 
+// ═══════════════════════ NOTES ════════════════════════════════════
+// One thread per load (collection "notes", field loadId). Append-only: the
+// security rules allow create and a single "seen" stamp by the recipient,
+// never edit or delete. Crew write change orders and field notes on their own
+// loads; managers write messages to the crew of a load.
+const NOTE_TYPES={change:'Change order',note:'Field note',message:'Message'};
+let notesUnsub=null,notesUnread=[],pendCount=0,noteThreadId=null,noteType='change';
+const isMgrRole=()=>session&&(session.role==='manager'||session.role==='bigboss');
+const tsDate=v=>v&&typeof v.toDate==='function'?v.toDate():(v?new Date(v):new Date());
+const fmtTs=v=>{const d=tsDate(v);return isNaN(d)?'—':d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});};
+
+function startNotesWatch(){
+  stopNotesWatch();
+  if(!session)return;
+  try{
+    const{db,collection,query,where,onSnapshot}=fb();
+    const q=isMgrRole()
+      ?query(collection(db,'notes'),where('to','==','manager'),where('seenAt','==',null))
+      :query(collection(db,'notes'),where('crewUid','==',session.uid),where('to','==','crew'),where('seenAt','==',null));
+    notesUnsub=onSnapshot(q,snap=>{
+      notesUnread=snap.docs.map(d=>({fid:d.id,...d.data()}));
+      renderNotesBadges();
+    },err=>console.log('notes watch:',err));
+  }catch(e){console.log('notes watch:',e);}
+}
+function stopNotesWatch(){try{if(notesUnsub)notesUnsub();}catch(e){}notesUnsub=null;notesUnread=[];pendCount=0;renderNotesBadges();}
+function renderNotesBadges(){
+  const n=notesUnread.length,b=el('notes-badge');
+  if(b){b.textContent=n;b.style.display=n?'inline-flex':'none';}
+  const a=el('notes-alert');
+  if(a){
+    if(!n||!session){a.innerHTML='';}
+    else{
+      const trucks=[...new Set(notesUnread.map(x=>x.truck).filter(Boolean))].join(', ');
+      const what=isMgrRole()?`${n} new change order${n===1?'':'s'} / field note${n===1?'':'s'} from the field`:`${n} new message${n===1?'':'s'} from the office`;
+      a.innerHTML=`<div class="alert a-warn" style="cursor:pointer" onclick="openNotes(${ja(notesUnread[0].loadId)})"><span class="ai">📩</span><div><strong>${h(what)}</strong>${trucks?` · Truck ${h(trucks)}`:''}<br><span style="font-size:13px">Tap to read.</span></div></div>`;
+    }
+  }
+  updateBell();
+}
+function updateBell(){
+  const bell=el('bell-btn'),bc=el('bell-count');if(!bell)return;
+  const total=(isMgrRole()?pendCount:0)+notesUnread.length;
+  bell.style.display=session&&(isMgrRole()||notesUnread.length)?'flex':'none';
+  bc.textContent=total;bc.style.display=total?'flex':'none';
+}
+function bellClick(){if(notesUnread.length)openNotes(notesUnread[0].loadId);else showScreen('s-admin');}
+
+async function fetchNotes(loadId){
+  if(!loadId||!session)return[];
+  const{where}=fb();
+  const rows=isMgrRole()
+    ?await fbQuery('notes',where('loadId','==',loadId))
+    :await fbQuery('notes',where('loadId','==',loadId),where('crewUid','==',session.uid));
+  return rows.sort((a,b)=>tsDate(a.createdAt)-tsDate(b.createdAt));
+}
+
+async function buildNotesIndex(){
+  el('notes-thread').style.display='none';noteThreadId=null;
+  const box=el('notes-index');box.style.display='';box.innerHTML='<div class="spinner"></div>';
+  try{
+    const{where}=fb();
+    let logs=isMgrRole()?await fbQuery('logs'):await fbQuery('logs',where('submittedByUid','==',session.uid));
+    logs=byNewest(logs,'date').slice(0,40);
+    const unreadBy={};notesUnread.forEach(x=>{unreadBy[x.loadId]=(unreadBy[x.loadId]||0)+1;});
+    if(!logs.length){box.innerHTML='<div class="empty"><div class="empty-icon">📝</div><h3>No loads yet</h3><p style="color:var(--ink3)">Notes belong to a load. Start a Morning Load first.</p></div>';return;}
+    box.innerHTML=logs.map(l=>{const u=unreadBy[l.fid]||0;return `<div class="nload" onclick="openNotes(${ja(l.fid)})">
+      <div class="kpi-ic" style="background:var(--blue-l);color:var(--blue)"><i class="ti ti-truck"></i></div>
+      <div style="flex:1;min-width:0"><div style="font-weight:700">Truck ${h(l.truck||'—')} · ${h(docNumber(l))}</div>
+      <div style="font-size:13px;color:var(--ink3)">${h(l.dateDisplay||'')}${l.jobId?' · Job '+h(l.jobId):''}${isMgrRole()?' · '+h(l.submittedBy||''):''}</div></div>
+      ${u?`<span class="nav-badge" style="margin-left:0">${u}</span>`:'<i class="ti ti-chevron-right" style="color:var(--ink3)"></i>'}</div>`;}).join('');
+  }catch(e){box.innerHTML='<div class="alert a-err"><span class="ai">⚠️</span><div>Could not load. Check your connection.</div></div>';}
+}
+
+async function openNotes(loadId){
+  if(!loadId){toast('Start a Morning Load first',true);return;}
+  if(!el('s-notes').classList.contains('active')){
+    document.querySelectorAll('.screen').forEach(x=>x.classList.remove('active'));el('s-notes').classList.add('active');
+    ['bn-dash','bn-load','bn-return','bn-history','bn-notes','bn-inventory','bn-admin'].forEach(b=>{const e=el(b);if(e)e.classList.toggle('active',b==='bn-notes');});
+    if(el('tb-title'))el('tb-title').textContent='Notes';toggleNav(false);window.scrollTo(0,0);
+  }
+  noteThreadId=loadId;
+  el('notes-index').style.display='none';
+  const box=el('notes-thread');box.style.display='';box.innerHTML='<div class="spinner"></div>';
+  try{
+    const[log,notes]=await Promise.all([fbGet(`logs/${loadId}`),fetchNotes(loadId)]);
+    if(noteThreadId!==loadId)return;
+    renderThread(loadId,log,notes);
+    markSeen(notes);
+  }catch(e){box.innerHTML=`<button class="btn btn-outline btn-sm" onclick="buildNotesIndex()">← All loads</button><div class="alert a-err" style="margin-top:10px"><span class="ai">⚠️</span><div>Could not load notes. Check your connection.</div></div>`;}
+}
+function noteCard(n){
+  const mine=n.authorUid===session?.uid;
+  const unread=!n.seenAt&&!mine&&((n.to==='crew'&&!isMgrRole())||(n.to==='manager'&&isMgrRole()));
+  const seen=n.seenAt?`✓ Seen by ${h(n.seenBy||'')} · ${h(fmtTs(n.seenAt))}`:(n.to==='crew'?'Not seen by the crew yet':'Not seen by the office yet');
+  return `<div class="note ${mine?'mine':''} ${unread?'unread':''}">
+    <div class="note-h"><span class="ntype ntype-${h(n.type)}">${h(NOTE_TYPES[n.type]||n.type)}</span><b>${h(n.authorName||'')}</b><span>${h(ROLES[n.authorRole]||n.authorRole||'')}</span><span>· ${h(fmtTs(n.createdAt))}</span></div>
+    <div class="note-t">${h(n.text||'')}</div>
+    ${n.type==='change'&&n.requestedBy?`<div class="note-req">Requested by (site supervisor): <strong>${h(n.requestedBy)}</strong></div>`:''}
+    <div class="note-seen">${seen}</div></div>`;
+}
+function renderThread(loadId,log,notes){
+  const box=el('notes-thread');
+  const head=log?`<div class="card card-dark" style="margin-top:10px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+      <div><div style="font-size:11px;opacity:.6;text-transform:uppercase">Truck</div><div style="font-size:20px;font-weight:800">${h(log.truck||'—')}</div></div>
+      <div style="text-align:right;font-size:13px;line-height:1.6">Doc ${h(docNumber({...log,fid:loadId}))}<br>${h(log.dateDisplay||'')}${log.jobId?'<br>Job ID '+h(log.jobId):''}</div></div>
+      <div style="font-size:13px;margin-top:8px;opacity:.8">Crew: ${h((log.crew||[]).join(', ')||'—')} · By ${h(log.submittedBy||'')}</div></div>`
+    :'<div class="alert a-warn" style="margin-top:10px"><span class="ai">⚠️</span><div>This load was deleted. Its notes are kept as a record.</div></div>';
+  const list=notes.length?notes.map(noteCard).join(''):'<div style="color:var(--ink3);font-size:14px;padding:14px 0;text-align:center">No notes on this load yet.</div>';
+  const canWrite=!!log;
+  const compose=!canWrite?'':isMgrRole()
+    ?`<div class="card"><label for="note-text">Message to the crew of truck ${h(log.truck||'')}</label>
+       <textarea id="note-text" rows="3" maxlength="1000" placeholder="e.g. Building 4 needs 2 extra downspouts on the back side."></textarea>
+       <button class="btn btn-gold btn-full" style="margin-top:10px" id="note-send" onclick="sendNote()">Send message</button></div>`
+    :`<div class="card"><div style="display:flex;gap:8px;margin-bottom:6px">
+         <button class="btn btn-sm ${noteType==='change'?'btn-gold':'btn-outline'}" style="flex:1" onclick="setNoteType('change')">Change order</button>
+         <button class="btn btn-sm ${noteType==='note'?'btn-gold':'btn-outline'}" style="flex:1" onclick="setNoteType('note')">Field note</button></div>
+       <div id="note-req-wrap" style="${noteType==='change'?'':'display:none'}"><label for="note-req">Requested by (site supervisor)</label>
+       <input type="text" id="note-req" maxlength="80" placeholder="Supervisor name"></div>
+       <label for="note-text">${noteType==='change'?'What changed':'Note'}</label>
+       <textarea id="note-text" rows="3" maxlength="1000" placeholder="${noteType==='change'?'e.g. Move downspout from the front corner to the left side of Building 2.':'e.g. Gate locked at Building 6, could not access the back.'}"></textarea>
+       <button class="btn btn-gold btn-full" style="margin-top:10px" id="note-send" onclick="sendNote()">Save ${noteType==='change'?'change order':'note'}</button></div>`;
+  box.innerHTML=`<button class="btn btn-outline btn-sm" onclick="buildNotesIndex()">← All loads</button>${head}
+    <div class="sec-label">Notes</div>${list}${compose}
+    <div style="font-size:12px;color:var(--ink3);margin-top:6px">Notes are permanent and go on the printed load sheet. To fix a mistake, add a new note starting with "Correction:".</div>`;
+}
+function setNoteType(t){
+  noteType=t;
+  const txt=el('note-text')?.value||'',req=el('note-req')?.value||'';
+  openNotesKeep(txt,req);
+}
+async function openNotesKeep(txt,req){
+  // Re-render the composer only, keeping what was typed.
+  const id=noteThreadId;if(!id)return;
+  const[log,notes]=await Promise.all([fbGet(`logs/${id}`),fetchNotes(id)]);
+  renderThread(id,log,notes);
+  if(el('note-text'))el('note-text').value=txt;if(el('note-req'))el('note-req').value=req;
+}
+async function sendNote(){
+  const id=noteThreadId;if(!id||!session)return;
+  if(isOffline){toast('No connection. Notes need internet to be saved.',true);return;}
+  const text=(el('note-text')?.value||'').trim();
+  const type=isMgrRole()?'message':noteType;
+  const requestedBy=type==='change'?(el('note-req')?.value||'').trim():'';
+  if(!text){toast('Write the note first',true);return;}
+  if(type==='change'&&!requestedBy){toast('Enter the supervisor who requested the change',true);return;}
+  const btn=el('note-send');if(btn){btn.disabled=true;btn.textContent='Saving…';}
+  try{
+    const log=await fbGet(`logs/${id}`);
+    if(!log){toast('Load not found',true);return;}
+    const data={loadId:id,crewUid:log.submittedByUid||'',truck:log.truck||'',type,text:text.slice(0,1000),
+      authorUid:session.uid,authorName:session.name,authorRole:session.role,
+      to:type==='message'?'crew':'manager',seenAt:null,seenBy:null,seenByUid:null};
+    if(type==='change')data.requestedBy=requestedBy.slice(0,80);
+    await fbAdd('notes',data);
+    writeAuditLog({type:'note_'+type,loadId:id});
+    toast(type==='message'?'✅ Message sent':'✅ Saved');
+    openNotesKeep('','');
+  }catch(e){console.log('sendNote',e);toast('Could not save the note',true);if(btn){btn.disabled=false;btn.textContent='Try again';}}
+}
+async function markSeen(notes){
+  const mine=notes.filter(n=>!n.seenAt&&n.authorUid!==session.uid&&((n.to==='crew'&&!isMgrRole()&&n.crewUid===session.uid)||(n.to==='manager'&&isMgrRole())));
+  for(const n of mine){
+    try{await fbUpdate(`notes/${n.fid}`,{seenAt:fb().serverTimestamp(),seenBy:session.name,seenByUid:session.uid});}catch(e){console.log('markSeen',e);}
+  }
+}
+function notesPrintHtml(notes){
+  if(!notes||!notes.length)return'';
+  return `<div class="print-section-title">Notes &amp; Change Orders</div>
+    <table class="ptbl notes"><tr><th style="width:15%">Time</th><th style="width:13%">Type</th><th style="width:17%">By</th><th>Note</th><th style="width:17%">Seen</th></tr>
+    ${notes.map(n=>`<tr><td>${h(fmtTs(n.createdAt))}</td><td>${h(NOTE_TYPES[n.type]||n.type)}</td><td>${h(n.authorName||'')}</td>
+      <td>${h(n.text||'')}${n.type==='change'&&n.requestedBy?`<br><em>Requested by: ${h(n.requestedBy)}</em>`:''}</td>
+      <td>${n.seenAt?h(n.seenBy||'')+'<br>'+h(fmtTs(n.seenAt)):'—'}</td></tr>`).join('')}</table>`;
+}
+function notesText(notes){
+  if(!notes||!notes.length)return'';
+  let t='\n── NOTES & CHANGE ORDERS ──\n';
+  notes.forEach(n=>{t+=`[${fmtTs(n.createdAt)}] ${(NOTE_TYPES[n.type]||n.type).toUpperCase()} · ${n.authorName}${n.type==='change'&&n.requestedBy?' · requested by '+n.requestedBy:''}\n${n.text}\n`;});
+  return t;
+}
+
 // ═══════════════════════ PRINT ════════════════════════════════════
 // Every sheet: customer header (logo, name, contact), 29 Cyber credit,
 // document number and page number in the footer.
@@ -3130,6 +3341,7 @@ async function printLog(log){
   try{const{where}=fb();jobs=await fbQuery('jobs',where('loadId','==',log.fid));}catch(e){}
 
   // Use dynamic colors from loaded data — not log.colors
+  let notes=[];try{notes=await fetchNotes(log.fid);}catch(e){}
   const colors=Object.keys(log.loaded||{});
   const docNo=docNumber(log);
   const pageList=[];
@@ -3139,6 +3351,7 @@ async function printLog(log){
     el('print-sheet').innerHTML=`<div class="print-page">
       ${printHeader('Daily Load Sheet',`<strong>Truck ${h(log.truck)}</strong>Doc: ${h(docNo)}<br>Odometer: ${h(log.odometer||'—')} mi<br>Job ID: ${h(log.jobId||'—')}<br>Loaded: ${h(log.dateDisplay)}<br>By: ${h(log.submittedBy)}`)}
       <div style="text-align:center;padding:40px;color:#888">No material data available for this load.</div>
+      ${notesPrintHtml(notes)}
       <div class="print-footer"><div class="sign-box">Driver Signature</div><div class="sign-box">Manager Signature</div><div class="sign-box">Date</div></div>
       ${printCredit(docNo,1,1)}
     </div>`;
@@ -3168,6 +3381,7 @@ async function printLog(log){
         }).join('')}
       </table>
       ${jobsHtml}
+      ${n===total?notesPrintHtml(notes):''}
       ${log.status==='approved'?`<div class="print-status">✅ Approved by ${h(log.approvedBy)}</div>`:'<div class="print-status" style="border-color:#b45309;color:#78350f">⏳ Pending Approval</div>'}
       <div class="print-footer"><div class="sign-box">Driver Signature</div><div class="sign-box">Manager Signature</div><div class="sign-box">Date</div></div>
       ${printCredit(docNo,n,total)}
@@ -3194,6 +3408,7 @@ function buildReportText(log){
     t+='\n';
   });
   t+=`Status: ${log.status==='approved'?'✅ Approved by '+log.approvedBy:'⏳ Pending Approval'}`;
+  t+=notesText(log._notes);
   t+=`\n\n— ${APP.name} · ${APP.vendor}`;
   return t;
 }
@@ -3209,7 +3424,8 @@ function renderRecipients(){
   el('recipients-list').innerHTML=recipients.map((r,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)"><span style="font-size:12px">${h(r)}</span><button class="btn btn-red btn-sm" onclick="removeRecipient(${i})">✕</button></div>`).join('');
 }
 
-function openSendModal(log){
+async function openSendModal(log){
+  try{log._notes=await fetchNotes(log.fid);}catch(e){log._notes=[];}
   sendTarget=log;
   el('send-preview').textContent=buildReportText(log);
   recipients=[];renderRecipients();
