@@ -256,6 +256,7 @@ input[type=number]{font-family:'JetBrains Mono',monospace}
 .auth-name{font-family:'Barlow Condensed',sans-serif;font-size:34px;font-weight:700;line-height:1;margin-top:12px}
 .auth-name b{color:var(--accent);font-weight:700}
 .auth-tag{font-size:15px;color:var(--ink3);margin-top:6px}
+body:not(.authed) #tb-company{display:none}
 .auth-co{display:inline-block;margin-top:10px;font-size:13px;font-weight:600;color:var(--ink2);border:1px solid var(--border);border-radius:20px;padding:3px 12px}
 .seg{display:flex;gap:6px;margin-bottom:14px}
 
@@ -393,8 +394,7 @@ body.authed .sidebar{display:flex}
     <div class="auth-hero">
       <span class="shield" role="img" aria-label="Twenty Nine Cyber"></span>
       <div class="auth-name"><b>29Cyber</b> CrewTrack</div>
-      <div class="auth-tag">Material tracking for gutter crews.</div>
-      <div class="auth-co" id="auth-company"></div>
+      <div class="auth-tag">Track every load. Prove every job.</div>
     </div>
 
     <div id="auth-login">
@@ -1081,9 +1081,9 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // 29Cyber CrewTrack is a Twenty Nine Cyber product licensed to each company.
 // To set the app up for another company, change only COMPANY (and the
 // firebaseConfig at the top, one Firebase project per company).
-const APP={name:'29Cyber CrewTrack',version:'2.0.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'2.0.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
-  name:'Gutter King',              // shown on the sign-in screen and the top bar
+  name:'Gutter King',              // shown only after sign-in (top bar, side menu); never on the public sign-in screen
   printName:'Daniel Gutter King',  // header of printed sheets
   crewDomain:'crew.dgk.internal'   // crew sign-in: <Employee ID>@<crewDomain>
 };
@@ -1100,7 +1100,6 @@ function toggleTheme(){
 }
 function applyBrand(){
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP.version);
-  if(el('auth-company'))el('auth-company').textContent=COMPANY.name;
   if(el('tb-company'))el('tb-company').textContent=COMPANY.name;
   if(el('side-company'))el('side-company').textContent=COMPANY.name;
   if(document.documentElement.getAttribute('data-theme')==='sun'&&el('sun-btn'))el('sun-btn').innerHTML='<i class="ti ti-moon"></i>';
