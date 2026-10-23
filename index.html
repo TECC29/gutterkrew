@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>GutterKrew — Material Tracking</title>
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
-  collection, query, where, orderBy, serverTimestamp }
+  collection, query, where, orderBy, serverTimestamp, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -25,9 +25,12 @@ const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 
+// Phase 1: initializeApp/getAuth/deleteApp + config let a manager create a crew
+// account in a separate, temporary Firebase instance without being signed out.
 window._fb = { auth, db, createUserWithEmailAndPassword, signInWithEmailAndPassword,
-  signOut, onAuthStateChanged, doc, setDoc, getDoc, getDocs, addDoc, updateDoc,
-  deleteDoc, collection, query, where, orderBy, serverTimestamp };
+  signOut, onAuthStateChanged, updatePassword, doc, setDoc, getDoc, getDocs, addDoc, updateDoc,
+  deleteDoc, collection, query, where, orderBy, serverTimestamp, writeBatch,
+  initializeApp, getAuth, deleteApp, firebaseConfig };
 window._fbReady = true;
 document.dispatchEvent(new Event('fbReady'));
 </script>
@@ -291,6 +294,8 @@ input[type=number]{font-family:'JetBrains Mono',monospace;font-size:16px}
         <div style="font-size:15px;font-weight:800;margin-bottom:12px">Create Crew Account</div>
         <label>Employee ID (7 digits — from your manager)</label>
         <input type="text" id="reg-empid" placeholder="1234567" maxlength="7" inputmode="numeric">
+        <label>Invite Code (from your manager)</label>
+        <input type="text" id="reg-code" placeholder="K7MP4XQ2" maxlength="8" autocomplete="off" autocapitalize="characters" style="text-transform:uppercase;font-family:'JetBrains Mono',monospace;letter-spacing:2px">
         <label>Your Name</label>
         <input type="text" id="reg-name" placeholder="Full name">
         <label>Password</label>
@@ -303,6 +308,23 @@ input[type=number]{font-family:'JetBrains Mono',monospace;font-size:16px}
         <button class="btn btn-gold btn-full" id="reg-submit-btn" style="margin-top:12px" onclick="doRegister()">Create Account →</button>
       </div>
       <button class="btn btn-outline btn-full" onclick="showAuth('login')">← Back to Sign In</button>
+    </div>
+
+    <!-- SET NEW PASSWORD (first login of an account created by a manager) -->
+    <div id="auth-setpass" style="display:none">
+      <div class="card">
+        <div style="font-size:15px;font-weight:800;margin-bottom:6px">Create Your Password</div>
+        <div style="font-size:13px;color:var(--ink3);margin-bottom:12px">Your manager created your account with a temporary password. Choose your own password to continue.</div>
+        <label>New Password</label>
+        <input type="password" id="sp-pass" placeholder="Min 8 characters" autocomplete="new-password">
+        <label>Confirm Password</label>
+        <input type="password" id="sp-pass2" placeholder="Repeat password" autocomplete="new-password">
+        <div id="sp-err" class="alert a-err" style="display:none;margin-top:10px">
+          <span class="ai">⚠️</span><span id="sp-err-msg"></span>
+        </div>
+        <button class="btn btn-gold btn-full" id="sp-btn" style="margin-top:12px" onclick="doSetPassword()">Save Password →</button>
+      </div>
+      <button class="btn btn-outline btn-full" onclick="doLogout()">Sign Out</button>
     </div>
 
     <!-- PENDING APPROVAL -->
@@ -368,7 +390,7 @@ input[type=number]{font-family:'JetBrains Mono',monospace;font-size:16px}
 <div class="screen" id="s-load">
   <div class="steps">
     <div class="step active" id="st1">1·Truck</div>
-    <div class="step" id="st2">2·Scan</div>
+    <div class="step" id="st2">2·Materials</div>
     <div class="step" id="st3">3·Review</div>
   </div>
 
@@ -400,17 +422,40 @@ input[type=number]{font-family:'JetBrains Mono',monospace;font-size:16px}
         <button class="btn btn-outline btn-sm" onclick="addCrew()">+ Add</button>
       </div>
     </div>
-    <button class="btn btn-gold btn-full" onclick="goLS2()">Next: Scan Materials →</button>
+    <button class="btn btn-gold btn-full" onclick="goLS2()">Next: Materials →</button>
   </div>
 
   <!-- Step 2: Scan boxes -->
   <div id="ls2" style="display:none">
-    <div class="alert a-info"><span class="ai">📦</span><div>Scan each box QR code. At least one box required to confirm load.</div></div>
+    <div class="alert a-info"><span class="ai">📦</span><div>Add the materials on the truck from the list. Scanning a box QR code is optional.</div></div>
 
-    <!-- Scanner -->
+    <!-- Material picker (main path) - restored in phase 1 -->
+    <div class="card" id="manual-entry-card">
+      <div class="sec-label">Add Material</div>
+      <label for="me-material">Material</label>
+      <select id="me-material"></select>
+      <label for="me-color">Color</label>
+      <select id="me-color"></select>
+      <input type="text" id="me-color-other" placeholder="Type the color" style="display:none;margin-top:6px">
+      <label for="me-qty">Quantity</label>
+      <div class="qty-ctrl" style="justify-content:flex-start">
+        <button class="qty-btn" type="button" onclick="chQ('me-qty',-meStep())" aria-label="Less">−</button>
+        <input class="qty-inp" id="me-qty" type="number" value="0" min="0" step="0.5" inputmode="decimal">
+        <button class="qty-btn" type="button" onclick="chQ('me-qty',meStep())" aria-label="More">+</button>
+      </div>
+      <button class="btn btn-gold btn-full" style="margin-top:10px" onclick="addManualItem()">+ Add to Load</button>
+    </div>
+
+    <!-- Materials added from the list -->
+    <div id="manual-items-section" style="display:none">
+      <div class="sec-label">Materials Added to Load</div>
+      <div id="manual-items-list"></div>
+    </div>
+
+    <!-- Scanner (optional shortcut) -->
     <div class="card" style="text-align:center;padding:20px">
       <div style="font-size:48px;margin-bottom:8px">📷</div>
-      <div style="font-size:14px;font-weight:700;margin-bottom:4px">Scan Box QR Code</div>
+      <div style="font-size:14px;font-weight:700;margin-bottom:4px">Optional: Scan Box QR Code</div>
       <div id="scan-attempts-info" style="font-size:12px;color:var(--ink3);margin-bottom:14px">Point your camera at a box QR code</div>
       <button class="btn btn-dark btn-full" onclick="startQRScan()" id="scan-btn">📷 Open Camera & Scan</button>
       <div id="qr-scanner-wrap" style="display:none;margin-top:12px;position:relative">
@@ -468,7 +513,7 @@ input[type=number]{font-family:'JetBrains Mono',monospace;font-size:16px}
     </div>
 
     <div id="confirm-load-shortcut" style="display:none;margin-top:10px">
-      <button class="btn btn-green btn-full" style="font-size:15px;padding:14px" onclick="goLS3()">✓ Done Scanning — Review & Confirm Load</button>
+      <button class="btn btn-green btn-full" style="font-size:15px;padding:14px" onclick="goLS3()">✓ Done — Review & Confirm Load</button>
     </div>
   </div>
 
@@ -477,7 +522,7 @@ input[type=number]{font-family:'JetBrains Mono',monospace;font-size:16px}
     <div class="alert a-warn"><span class="ai">📋</span><div>Review before confirming. This is the official record.</div></div>
     <div id="load-summary"></div>
     <div style="display:flex;gap:8px;margin-top:8px">
-      <button class="btn btn-outline" onclick="goLS2()">← Edit</button>
+      <button class="btn btn-outline" onclick="goLS2(true)">← Edit</button>
       <button class="btn btn-green" id="confirm-load-btn" style="flex:1" onclick="confirmLoad()">✓ Confirm Load</button>
     </div>
   </div>
@@ -633,9 +678,21 @@ input[type=number]{font-family:'JetBrains Mono',monospace;font-size:16px}
       <button class="btn btn-sm" id="at-security" onclick="adminTab('security')" style="background:var(--red-l);color:var(--red);border-color:var(--red);border:1.5px solid">🔒 Security</button>
     </div>
     <div id="admin-sheets-view"><div id="admin-sheets-list"></div></div>
-    <div id="admin-users-view" style="display:none"><div class="sec-label">Active Users</div><div id="users-active" class="card"></div></div>
+    <div id="admin-users-view" style="display:none">
+      <div class="sec-label">Active Users</div><div id="users-active" class="card"></div>
+      <div class="card">
+        <div style="font-size:13px;font-weight:700;margin-bottom:4px">Create Crew Account</div>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">The account is active right away. The crew member signs in with the Employee ID and this temporary password, then creates their own password.</div>
+        <label>Employee ID (7 digits)</label><input type="text" id="cc-empid" placeholder="1234567" maxlength="7" inputmode="numeric">
+        <label>Name</label><input type="text" id="cc-name" placeholder="Full name">
+        <label>Temporary Password</label>
+        <div style="display:flex;gap:8px"><input type="text" id="cc-pass" style="flex:1;font-family:'JetBrains Mono',monospace" autocomplete="off"><button class="btn btn-outline btn-sm" type="button" onclick="el('cc-pass').value=genCode(10)">New</button></div>
+        <div id="cc-err" class="alert a-err" style="display:none;margin-top:10px"><span class="ai">⚠️</span><span id="cc-err-msg"></span></div>
+        <button class="btn btn-gold btn-full" id="cc-btn" style="margin-top:10px" onclick="createCrewAccount()">+ Create Account</button>
+      </div>
+    </div>
     <div id="admin-ids-view" style="display:none">
-      <div class="alert a-info"><span class="ai">🪪</span><div>Register IDs before crew members can sign up.</div></div>
+      <div class="alert a-info"><span class="ai">🪪</span><div>Each ID gets an invite code. Give the crew member the ID and the code so they can sign up and wait for your approval. Or create the account yourself in Users.</div></div>
       <div id="ids-list" class="card"></div>
       <div class="card">
         <div style="font-size:13px;font-weight:700;margin-bottom:10px">Add Employee ID</div>
@@ -889,6 +946,12 @@ let isOffline=false;
 const el=id=>document.getElementById(id);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const esc=s=>(s||'').replace(/[^a-zA-Z0-9]/g,'_');
+// Security (29 Cyber, phase 1): escape every value that comes from the database
+// or from user input before it goes into innerHTML.
+// h()  -> text or attribute content.
+// ja() -> a value passed as an argument inside an onclick="..." attribute.
+const h=s=>String(s??'').replace(/[&<>"'`]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','`':'&#96;'}[c]));
+const ja=s=>h(JSON.stringify(String(s??'')));
 const today=()=>new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
 
 function toast(msg,err=false){
@@ -972,7 +1035,7 @@ function setLT(t){
   el('lt-admin').className='btn btn-sm '+(t==='admin'?'btn-gold':'btn-outline');
 }
 function showAuth(v){
-  ['login','register','pending'].forEach(x=>{
+  ['login','register','pending','setpass'].forEach(x=>{
     const e=el('auth-'+x);if(e)e.style.display=x===v?'':'none';
   });
 }
@@ -1028,44 +1091,148 @@ async function doLogin(){
   }
 }
 
+// ═══════════════ CREW ACCOUNTS (phase 1) ═══════════════
+// Two independent ways to create a crew account:
+//  B) Self sign-up: Employee ID + invite code from the manager. The Firestore
+//     rules check the code on Google's servers, so the Employee ID list is no
+//     longer readable by the public. The account still waits for approval.
+//  A) The manager creates the account (createCrewAccount) with a temporary
+//     password; the crew member sets their own password at first login.
+const CODE_CHARS='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+function genCode(n=8){const a=new Uint32Array(n);crypto.getRandomValues(a);return Array.from(a,x=>CODE_CHARS[x%CODE_CHARS.length]).join('');}
+const crewEmail=empid=>`${empid}@crew.dgk.internal`;
+let registering=false; // pauses the auth listener while an account is being created
+
 async function doRegister(){
   el('reg-err').style.display='none';
-  const empid=el('reg-empid').value.trim(),name=el('reg-name').value.trim(),pass=el('reg-pass').value,pass2=el('reg-pass2').value;
-  if(empid.length!==7||isNaN(empid)){showRegErr('ID must be 7 digits');return;}
+  const empid=el('reg-empid').value.trim(),name=el('reg-name').value.trim().slice(0,60);
+  const code=el('reg-code').value.trim().toUpperCase(),pass=el('reg-pass').value,pass2=el('reg-pass2').value;
+  if(!/^\d{7}$/.test(empid)){showRegErr('ID must be 7 digits');return;}
+  if(!/^[A-Z0-9]{8}$/.test(code)){showRegErr('Enter the 8-character invite code from your manager');return;}
   if(!name){showRegErr('Enter your name');return;}
-  if(pass.length<6){showRegErr('Password min 6 characters');return;}
+  if(pass.length<8){showRegErr('Password min 8 characters');return;}
   if(pass!==pass2){showRegErr('Passwords do not match');return;}
   const btn=el('reg-submit-btn');
+  const reset=()=>{if(btn){btn.textContent='Create Account →';btn.disabled=false;}};
   if(btn){btn.textContent='Creating account…';btn.disabled=true;}
+  registering=true;
+  let cred=null;
   try{
-    const idDoc=await fbGet(`employeeIds/${empid}`);
-    if(!idDoc){showRegErr('ID not found. Contact your manager.');if(btn){btn.textContent='Create Account →';btn.disabled=false;}return;}
-    if(idDoc.used){showRegErr('This ID already has an account.');if(btn){btn.textContent='Create Account →';btn.disabled=false;}return;}
-    const fakeEmail=`${empid}@crew.dgk.internal`;
-    const cred=await fb().createUserWithEmailAndPassword(fb().auth,fakeEmail,pass);
-    // Create user as PENDING — requires manager approval
-    await fbSet(`users/${cred.user.uid}`,{
-      name,empId:empid,email:fakeEmail,role:'crew',
-      status:'pending',
+    cred=await fb().createUserWithEmailAndPassword(fb().auth,crewEmail(empid),pass);
+  }catch(e){
+    registering=false;
+    showRegErr(e.code==='auth/email-already-in-use'?'This ID already has an account. Contact your manager.':'Could not create the account. Check your connection and try again.');
+    reset();return;
+  }
+  try{
+    // One batch: profile + ID claim are saved together or not at all.
+    // The rules accept it only if the ID exists, is free and the code matches.
+    const{db,doc,writeBatch}=fb();const batch=writeBatch(db);
+    batch.set(doc(db,'users',cred.user.uid),{
+      name,empId:empid,email:crewEmail(empid),role:'crew',
+      status:'pending',inviteCode:code,
       registeredAt:new Date().toISOString()
     });
-    await fbUpdate(`employeeIds/${empid}`,{used:true,assignedTo:name,assignedUid:cred.user.uid});
-    // Sign out immediately — can't use app until approved
+    batch.update(doc(db,'employeeIds',empid),{used:true,assignedTo:name,assignedUid:cred.user.uid});
+    await batch.commit();
     await fb().signOut(fb().auth);
-    // Show pending message
+    registering=false;
     el('auth-register').style.display='none';
     el('auth-pending').style.display='';
     el('auth-pending-name').textContent=name;
+    reset();
   }catch(e){
-    showRegErr(e.code==='auth/email-already-in-use'?'ID already registered.':'Error: '+e.message);
-    if(btn){btn.textContent='Create Account →';btn.disabled=false;}
+    // Wrong ID or code: remove the half-created login so the ID stays free.
+    try{await cred.user.delete();}catch(_){try{await fb().signOut(fb().auth);}catch(__){}}
+    registering=false;
+    showRegErr('Employee ID or invite code is not valid. Check both with your manager.');
+    reset();
   }
 }
 
+// A) Manager creates a crew account without being signed out.
+async function createCrewAccount(){
+  const errBox=el('cc-err'),errMsg=el('cc-err-msg');
+  const fail=m=>{errMsg.textContent=m;errBox.style.display='flex';};
+  errBox.style.display='none';
+  if(!(session?.role==='manager'||session?.role==='bigboss')){fail('Only managers can create accounts.');return;}
+  const empid=el('cc-empid').value.trim(),name=el('cc-name').value.trim().slice(0,60),pass=el('cc-pass').value.trim();
+  if(!/^\d{7}$/.test(empid)){fail('ID must be 7 digits');return;}
+  if(!name){fail('Enter the name');return;}
+  if(pass.length<8){fail('Temporary password min 8 characters');return;}
+  const btn=el('cc-btn');btn.disabled=true;btn.textContent='Creating…';
+  const done=()=>{btn.disabled=false;btn.textContent='+ Create Account';};
+  let idDoc=null;
+  try{idDoc=await fbGet(`employeeIds/${empid}`);}catch(e){fail('Could not check the ID. Check your connection.');done();return;}
+  if(idDoc&&idDoc.used){fail('This ID already has an account.');done();return;}
+  const F=fb();
+  let tmpApp=null,newUser=null;
+  try{
+    tmpApp=F.initializeApp(F.firebaseConfig,'crew-create-'+Date.now());
+    const tmpAuth=F.getAuth(tmpApp);
+    newUser=(await F.createUserWithEmailAndPassword(tmpAuth,crewEmail(empid),pass)).user;
+    const now=new Date().toISOString();
+    // One batch: profile + Employee ID are saved together or not at all.
+    const{db,doc,writeBatch}=F;const batch=writeBatch(db);
+    batch.set(doc(db,'users',newUser.uid),{
+      name,empId:empid,email:crewEmail(empid),role:'crew',status:'approved',
+      mustChangePassword:true,registeredAt:now,
+      createdBy:session.name,createdByUid:session.uid,approvedBy:session.name,approvedAt:now
+    });
+    if(idDoc)batch.update(doc(db,'employeeIds',empid),{used:true,assignedTo:name,assignedUid:newUser.uid});
+    else batch.set(doc(db,'employeeIds',empid),{name,used:true,assignedTo:name,assignedUid:newUser.uid,createdAt:now,createdBy:session.name});
+    await batch.commit();
+    await F.signOut(tmpAuth);
+    await writeAuditLog({type:'crew_account_created',empId:empid,targetUid:newUser.uid,method:'manager'});
+    el('cc-empid').value='';el('cc-name').value='';el('cc-pass').value=genCode(10);
+    toast(`✅ Account created for ${name}`);
+    alert(`Account created.\n\nEmployee ID: ${empid}\nTemporary password: ${pass}\n\nGive these to ${name}. The app will ask for a new password at first sign-in.`);
+    buildAdminUsers();
+  }catch(e){
+    if(newUser){try{await newUser.delete();}catch(_){}}
+    fail(e.code==='auth/email-already-in-use'
+      ?'A login for this ID already exists (from an old account). Delete it in Firebase Authentication, then try again.'
+      :'Could not create the account. Check your connection and try again.');
+  }finally{
+    if(tmpApp){try{await F.deleteApp(tmpApp);}catch(_){}}
+    done();
+  }
+}
+
+// First sign-in of a manager-created account: replace the temporary password.
+async function doSetPassword(){
+  const errBox=el('sp-err');errBox.style.display='none';
+  const fail=m=>{el('sp-err-msg').textContent=m;errBox.style.display='flex';};
+  const p1=el('sp-pass').value,p2=el('sp-pass2').value;
+  if(p1.length<8){fail('Password min 8 characters');return;}
+  if(p1!==p2){fail('Passwords do not match');return;}
+  const user=fb().auth.currentUser;if(!user){showAuth('login');return;}
+  const btn=el('sp-btn');btn.disabled=true;btn.textContent='Saving…';
+  try{
+    await fb().updatePassword(user,p1);
+    await fbUpdate(`users/${user.uid}`,{mustChangePassword:false});
+    el('sp-pass').value='';el('sp-pass2').value='';
+    session=null;
+    await afterLogin(user);
+  }catch(e){
+    fail(e.code==='auth/requires-recent-login'?'Session expired. Sign out and sign in again with the temporary password.':'Could not save the password. Try again.');
+  }finally{btn.disabled=false;btn.textContent='Save Password →';}
+}
+
 function showLiErr(m){el('li-err').style.display='flex';el('li-err-msg').textContent=m;}
+// Was called but never defined (it threw on the pending-account path).
+function resetLoginBtn(){const b=el('li-signin-btn');if(b){b.textContent='Sign In →';b.disabled=false;}}
 function showRegErr(m){el('reg-err').style.display='flex';el('reg-err-msg').textContent=m;}
 
-async function afterLogin(user){
+// Sign-in and the auth listener can both call afterLogin at the same moment;
+// run it once per user (it was running twice and could sync offline data twice).
+let _alP=null,_alU=null;
+function afterLogin(user){
+  if(_alP&&_alU===user.uid)return _alP;
+  _alU=user.uid;_alP=_afterLogin(user).finally(()=>{_alP=null;});
+  return _alP;
+}
+async function _afterLogin(user){
   if(session&&session.uid===user.uid){
     // Already logged in — just redirect
     showScreen('s-dash'); return;
@@ -1081,6 +1248,10 @@ async function afterLogin(user){
       el('auth-pending').style.display='';
       if(el('auth-pending-name'))el('auth-pending-name').textContent=profile.name;
       resetLoginBtn();return;
+    }
+    // Account created by a manager: the temporary password must be replaced first.
+    if(profile.mustChangePassword===true){
+      showScreen('s-auth');showAuth('setpass');resetLoginBtn();return;
     }
     session={uid:user.uid,...profile};
     el('tb-name').textContent=session.name;
@@ -1126,19 +1297,35 @@ async function doLogout(){
   el('bottom-nav').style.display='none';
   el('bn-admin').style.display='none';
   el('bn-inventory').style.display='flex';
-  showScreen('s-auth');showAuth('login');
+  showScreen('s-auth');showAuth('login');resetLoginBtn();
   el('tb-name').textContent='—';el('tb-role').textContent='';
 }
 
 // ═══════════════════════ APP CONFIG ══════════════════════════════
+// Phase 1: the database is the source of truth for the material and color lists.
+// The app no longer overwrites them at login (that erased materials added by the
+// manager). Lists are only seeded when they do not exist yet, and only by a manager.
+function cleanMaterials(list){
+  return (Array.isArray(list)?list:[]).filter(m=>m&&typeof m.id==='string'&&m.id&&typeof m.name==='string'&&m.name)
+    .map(m=>({id:m.id,name:m.name,unit:String(m.unit||'pcs'),unitLabel:String(m.unitLabel||m.unit||'pcs'),step:Number(m.step)||1}));
+}
+function cleanColors(list){
+  return (Array.isArray(list)?list:[]).filter(c=>typeof c==='string'&&c.trim()).map(c=>c.trim());
+}
 async function loadAppConfig(){
+  const isMgr=session&&(session.role==='manager'||session.role==='bigboss');
   try{
-    // Always push latest lists to Firebase — overwrites any old cached values
-    await fbSet('config/materials',{list:DEFAULT_MATERIALS});
-    MATERIALS=[...DEFAULT_MATERIALS];
-    await fbSet('config/colors',{list:COLORS_DEF});
-    COLORS=[...COLORS_DEF];
-  }catch(e){console.log('loadAppConfig error:',e);}
+    const mats=await fbGet('config/materials');
+    const list=cleanMaterials(mats?.list);
+    if(list.length){MATERIALS=list;}
+    else{MATERIALS=[...DEFAULT_MATERIALS];if(isMgr)await fbSet('config/materials',{list:DEFAULT_MATERIALS});}
+  }catch(e){console.log('loadAppConfig materials:',e);MATERIALS=[...DEFAULT_MATERIALS];}
+  try{
+    const cols=await fbGet('config/colors');
+    const list=cleanColors(cols?.list);
+    if(list.length){COLORS=list;}
+    else{COLORS=[...COLORS_DEF];if(isMgr)await fbSet('config/colors',{list:COLORS_DEF});}
+  }catch(e){console.log('loadAppConfig colors:',e);COLORS=[...COLORS_DEF];}
   buildColorTags();
 }
 
@@ -1146,15 +1333,15 @@ async function loadAppConfig(){
 function buildColorTags(){
   const ct=el('color-tags');
   if(!ct)return;
-  ct.innerHTML=COLORS.map(c=>`<div class="color-tag ${selColors.includes(c)?'sel':''}" data-color="${c.replace(/"/g,'&quot;')}" onclick="toggleColorTag(this)">${c}</div>`).join('');
+  ct.innerHTML=COLORS.map(c=>`<div class="color-tag ${selColors.includes(c)?'sel':''}" data-color="${h(c)}" onclick="toggleColorTag(this)">${h(c)}</div>`).join('');
 }
 function toggleColorTag(div){const c=div.getAttribute('data-color');const i=selColors.indexOf(c);if(i>=0)selColors.splice(i,1);else selColors.push(c);div.classList.toggle('sel',selColors.includes(c));}
-async function addColor(){const v=el('color-inp').value.trim();if(!v)return;if(!COLORS.includes(v))COLORS.push(v);if(!selColors.includes(v))selColors.push(v);el('color-inp').value='';await fbSet('config/colors',{list:COLORS});buildColorTags();}
+async function addColor(){if(!(session?.role==='manager'||session?.role==='bigboss'))return;const v=el('color-inp').value.trim();if(!v)return;if(!COLORS.includes(v))COLORS.push(v);if(!selColors.includes(v))selColors.push(v);el('color-inp').value='';await fbSet('config/colors',{list:COLORS});buildColorTags();}
 
 // ═══════════════════════ CREW ════════════════════════════════════
 function addCrew(){const v=el('crew-inp').value.trim();if(!v||crewList.includes(v))return;crewList.push(v);el('crew-inp').value='';renderCrew();}
 function removeCrew(n){crewList=crewList.filter(c=>c!==n);renderCrew();}
-function renderCrew(){el('crew-tags').innerHTML=crewList.map(c=>`<div class="crew-tag">${c}<span class="x" onclick="removeCrew(${JSON.stringify(c)})">×</span></div>`).join('');}
+function renderCrew(){el('crew-tags').innerHTML=crewList.map(c=>`<div class="crew-tag">${h(c)}<span class="x" onclick="removeCrew(${ja(c)})">×</span></div>`).join('');}
 
 // ═══════════════════════ EXTRA MATS ══════════════════════════════
 function addExtra(){
@@ -1165,21 +1352,27 @@ function addExtra(){
   renderExtras();toast(`✅ ${name} added`);
 }
 function removeExtra(i){extraMats.splice(i,1);renderExtras();}
-function renderExtras(){el('extra-list').innerHTML=extraMats.map((m,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)"><div><div style="font-size:12px;font-weight:700">${m.name}</div><div style="font-size:10px;color:var(--ink3)">${m.color} · ${m.qty} ${m.unit}</div></div><button class="btn btn-red btn-sm" onclick="removeExtra(${i})">✕</button></div>`).join('');}
+function renderExtras(){el('extra-list').innerHTML=extraMats.map((m,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)"><div><div style="font-size:12px;font-weight:700">${h(m.name)}</div><div style="font-size:10px;color:var(--ink3)">${h(m.color)} · ${h(m.qty)} ${h(m.unit)}</div></div><button class="btn btn-red btn-sm" onclick="removeExtra(${i})">✕</button></div>`).join('');}
 
 // ═══════════════════════ LOAD STEPS ══════════════════════════════
 function setSteps(a){['st1','st2','st3'].forEach((s,i)=>el(s).className='step'+(i<a?' done':i===a?' active':''));}
 function goLS1(){el('ls1').style.display='';el('ls2').style.display='none';el('ls3').style.display='none';setSteps(0);}
-function goLS2(){
+// keep=true when coming back from Review: the materials already added stay.
+function goLS2(keep=false){
   if(!el('truck').value.trim()){toast('Enter truck number',true);return;}
   el('ls1').style.display='none';el('ls2').style.display='';el('ls3').style.display='none';setSteps(1);
-  confirmedBoxes=[];pendingScanBox=null;manualItems=[];
+  pendingScanBox=null;
   el('scan-pending').style.display='none';
-  el('confirmed-items-section').style.display='none';
-  el('manual-items-section').style.display='none';
-  el('confirm-load-shortcut').style.display='none';
-  el('confirmed-items-list').innerHTML='';
+  if(!keep){
+    confirmedBoxes=[];manualItems=[];
+    el('confirmed-items-section').style.display='none';
+    el('manual-items-section').style.display='none';
+    el('confirm-load-shortcut').style.display='none';
+    el('confirmed-items-list').innerHTML='';
+  }
   buildMatInputs();
+  renderManualItems();renderConfirmedBoxes();
+  if(confirmedBoxes.length||manualItems.length)el('confirm-load-shortcut').style.display='';
 }
 function goLS3(){el('ls1').style.display='none';el('ls2').style.display='none';el('ls3').style.display='';setSteps(2);buildLoadSummary();}
 
@@ -1190,23 +1383,22 @@ function buildMatInputs(){
   const matSel=el('me-material');
   if(matSel){
     matSel.innerHTML='<option value="">— Select material —</option>'+
-      MATERIALS.map(m=>`<option value="${m.id}" data-unit="${m.unit}" data-step="${m.step}">${m.name} (${m.unitLabel||m.unit})</option>`).join('');
+      MATERIALS.map(m=>`<option value="${h(m.id)}" data-unit="${h(m.unit)}" data-step="${h(m.step)}">${h(m.name)} (${h(m.unitLabel||m.unit)})</option>`).join('');
   }
   // Populate color dropdown
   const colSel=el('me-color');
   if(colSel){
     colSel.innerHTML='<option value="">— Select color —</option>'+
-      COLORS.map(c=>`<option value="${c}">${c}</option>`).join('')+
+      COLORS.map(c=>`<option value="${h(c)}">${h(c)}</option>`).join('')+
       '<option value="__other__">Other (type below)…</option>';
     colSel.onchange=function(){
       const other=el('me-color-other');
       if(other)other.style.display=this.value==='__other__'?'block':'none';
     };
   }
-  // Reset
+  // Quantity step follows the chosen material (feet in 0.5, pieces in 1)
+  if(matSel)matSel.onchange=function(){const q=el('me-qty');if(q)q.step=meStep();};
   if(el('me-qty'))el('me-qty').value=0;
-  manualItems=[];
-  renderManualItems();
 }
 
 function addManualItem(){
@@ -1246,14 +1438,16 @@ function renderManualItems(){
   el('manual-items-list').innerHTML=manualItems.map((item,i)=>`
     <div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;margin-bottom:8px;border-left:4px solid var(--gold)">
       <div>
-        <div style="font-size:13px;font-weight:800">${item.matName}</div>
-        <div style="font-size:11px;color:var(--ink3);margin-top:2px">${item.color} · <span style="font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--gold-d)">${item.qty} ${item.unit}</span></div>
+        <div style="font-size:13px;font-weight:800">${h(item.matName)}</div>
+        <div style="font-size:11px;color:var(--ink3);margin-top:2px">${h(item.color)} · <span style="font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--gold-d)">${h(item.qty)} ${h(item.unit)}</span></div>
       </div>
       <button class="btn btn-red btn-sm" onclick="removeManualItem(${i})">✕</button>
     </div>`).join('');
 }
 
-function chQ(id,d){const e=el(id);if(!e)return;e.value=Math.max(0,Math.round((parseFloat(e.value)||0+d)*10)/10);}
+function chQ(id,d){const e=el(id);if(!e)return;e.value=Math.max(0,Math.round(((parseFloat(e.value)||0)+d)*10)/10);}
+// Step of the material chosen in the picker (e.g. 0.5 ft for coil, 1 for pieces)
+function meStep(){const m=MATERIALS.find(x=>x.id===el('me-material')?.value);return Number(m?.step)||1;}
 
 function getLoadData(){
   const data={};
@@ -1277,26 +1471,26 @@ function buildLoadSummary(){
   let html='';
   colors.forEach(c=>{
     const rows=MATERIALS.filter(m=>(data[c][m.id]||0)>0);if(!rows.length)return;
-    html+=`<div class="card"><div style="font-size:11px;font-weight:800;text-transform:uppercase;color:var(--gold-d);margin-bottom:8px">${c}</div>
+    html+=`<div class="card"><div style="font-size:11px;font-weight:800;text-transform:uppercase;color:var(--gold-d);margin-bottom:8px">${h(c)}</div>
       <table class="stbl"><tr><th>Material</th><th style="text-align:right">Qty</th></tr>
-      ${rows.map(m=>`<tr><td>${m.name}</td><td class="num">${data[c][m.id]} ${m.unit}</td></tr>`).join('')}</table></div>`;
+      ${rows.map(m=>`<tr><td>${h(m.name)}</td><td class="num">${h(data[c][m.id])} ${h(m.unit)}</td></tr>`).join('')}</table></div>`;
   });
   if(extraMats.length){
     html+=`<div class="card" style="border:1.5px dashed #f59e0b"><div style="font-size:11px;font-weight:800;color:var(--gold-d);margin-bottom:8px">EXTRA MATERIALS</div>
       <table class="stbl"><tr><th>Material</th><th>Color</th><th style="text-align:right">Qty</th></tr>
-      ${extraMats.map(m=>`<tr><td>${m.name}</td><td style="color:var(--ink3)">${m.color}</td><td class="num">${m.qty} ${m.unit}</td></tr>`).join('')}</table></div>`;
+      ${extraMats.map(m=>`<tr><td>${h(m.name)}</td><td style="color:var(--ink3)">${h(m.color)}</td><td class="num">${h(m.qty)} ${h(m.unit)}</td></tr>`).join('')}</table></div>`;
   }
   const jd=el('job-date').value;
   const jdDisplay=jd?new Date(jd+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'}):today();
   html+=`<div class="card card-dark">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <div><div style="font-size:10px;opacity:.6">Truck</div><div style="font-size:20px;font-weight:900;font-family:'JetBrains Mono',monospace">${el('truck').value||'—'}</div></div>
-      <div><div style="font-size:10px;opacity:.6">Odometer</div><div style="font-size:16px;font-weight:800;font-family:'JetBrains Mono',monospace;color:#f59e0b">${el('odometer').value||'—'} mi</div></div>
+      <div><div style="font-size:10px;opacity:.6">Truck</div><div style="font-size:20px;font-weight:900;font-family:'JetBrains Mono',monospace">${h(el('truck').value||'—')}</div></div>
+      <div><div style="font-size:10px;opacity:.6">Odometer</div><div style="font-size:16px;font-weight:800;font-family:'JetBrains Mono',monospace;color:#f59e0b">${h(el('odometer').value||'—')} mi</div></div>
       <div><div style="font-size:10px;opacity:.6">Load Date</div><div style="font-size:12px;font-weight:600;margin-top:2px">${today()}</div></div>
       <div><div style="font-size:10px;opacity:.6">Job Date</div><div style="font-size:12px;font-weight:600;margin-top:2px;color:#f59e0b">${jdDisplay}</div></div>
-      <div><div style="font-size:10px;opacity:.6">Job ID</div><div style="font-size:12px;font-weight:700;margin-top:2px;font-family:'JetBrains Mono',monospace">${el('job-id').value||'—'}</div></div>
-      <div><div style="font-size:10px;opacity:.6">Address</div><div style="font-size:12px;font-weight:600;margin-top:2px">${el('job').value||'—'}</div></div>
-      <div style="grid-column:1/-1"><div style="font-size:10px;opacity:.6">Crew</div><div style="font-size:12px;font-weight:600;margin-top:2px">${crewList.join(', ')||'—'}</div></div>
+      <div><div style="font-size:10px;opacity:.6">Job ID</div><div style="font-size:12px;font-weight:700;margin-top:2px;font-family:'JetBrains Mono',monospace">${h(el('job-id').value||'—')}</div></div>
+      <div><div style="font-size:10px;opacity:.6">Address</div><div style="font-size:12px;font-weight:600;margin-top:2px">${h(el('job').value||'—')}</div></div>
+      <div style="grid-column:1/-1"><div style="font-size:10px;opacity:.6">Crew</div><div style="font-size:12px;font-weight:600;margin-top:2px">${h(crewList.join(', ')||'—')}</div></div>
     </div>
   </div>`;
   html+=`<div class="alert a-info"><span class="ai">ℹ️</span><div>Stock will be verified when you tap <strong>Confirm Load</strong>. If quantities exceed warehouse stock, the load will be blocked.</div></div>`;
@@ -1359,10 +1553,10 @@ async function confirmLoad(){
   const jdDisplay=jd?new Date(jd+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'}):today();
   const data=getLoadData();
 
-  // Require at least one box scanned
-  if(!confirmedBoxes.length&&!extraMats.length){
+  // Require at least one material: from the list, a scanned box or a field purchase
+  if(!confirmedBoxes.length&&!manualItems.length&&!extraMats.length){
     errorSound();
-    toast('🚨 Scan at least one box before confirming load',true);
+    toast('🚨 Add at least one material before confirming load',true);
     return;
   }
   if(!Object.keys(data).length&&!extraMats.length){toast('Add at least one material before confirming',true);return;}
@@ -1380,11 +1574,11 @@ async function confirmLoad(){
       // Build detailed error
       let rows=shortages.map(s=>`
         <tr style="border-bottom:1px solid #fecaca">
-          <td style="padding:6px 8px;font-weight:700">${s.material}</td>
-          <td style="padding:6px 8px">${s.color}</td>
-          <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:800;color:var(--red)">${s.requested} ${s.unit}</td>
-          <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:800;color:var(--green)">${s.available} ${s.unit}</td>
-          <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:800;color:var(--red)">-${s.shortage} ${s.unit}</td>
+          <td style="padding:6px 8px;font-weight:700">${h(s.material)}</td>
+          <td style="padding:6px 8px">${h(s.color)}</td>
+          <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:800;color:var(--red)">${h(s.requested)} ${h(s.unit)}</td>
+          <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:800;color:var(--green)">${h(s.available)} ${h(s.unit)}</td>
+          <td style="padding:6px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:800;color:var(--red)">-${h(s.shortage)} ${h(s.unit)}</td>
         </tr>`).join('');
       const errDiv=document.createElement('div');
       errDiv.id='stock-error-banner';
@@ -1442,10 +1636,10 @@ async function confirmLoad(){
     jobs:[],used:null,status:'open',
     submittedBy:session.name,submittedByUid:session.uid,approvedBy:null
   };
-  extraMats=[];
   try{
     if(isOffline){
-      // Cannot verify stock offline — block load
+      // Cannot verify stock offline — block load (field purchases are kept)
+      todayLoad=null;
       errorSound();
       toast('Cannot confirm load while offline — stock cannot be verified.',true);
       if(confirmBtn){confirmBtn.textContent='✓ Confirm Load';confirmBtn.disabled=false;}
@@ -1453,6 +1647,7 @@ async function confirmLoad(){
     }
     const ref=await fbAdd('logs',todayLoad);
     todayLoad.fid=ref.id;
+    extraMats=[];
     localStorage.setItem('dgk_today_load_'+session.uid,JSON.stringify(todayLoad));
     // Audit log — load confirmed
     const manualBoxes=confirmedBoxes.filter(b=>b._isManualEntry);
@@ -1463,7 +1658,8 @@ async function confirmLoad(){
       boxes:confirmedBoxes.map(b=>b.boxId),
       manualEntries:manualBoxes.map(b=>b.boxId),
       hasManualEntries:manualBoxes.length>0,
-      note:manualBoxes.length>0?`Manual entries: ${manualBoxes.map(b=>b.boxId).join(', ')}`:'All boxes scanned'
+      listItems:manualItems.map(i=>({matId:i.matId,color:i.color,qty:i.qty})),
+      note:manualBoxes.length>0?`Manual box entries: ${manualBoxes.map(b=>b.boxId).join(', ')}`:confirmedBoxes.length?'All boxes scanned':'Materials added from the list (no boxes scanned)'
     });
     // Update each box's history in Firebase
     await Promise.all(confirmedBoxes.map(b=>
@@ -1533,10 +1729,10 @@ async function buildDash(){
   el('dash-jobs-list').innerHTML=todayJobs.length?todayJobs.map(j=>`
     <div class="job-card">
       <div class="job-card-hdr">
-        <div><div class="job-num">Job ${j.jobNum||''}</div><div class="job-addr">${j.address||'—'}</div></div>
+        <div><div class="job-num">Job ${h(j.jobNum||'')}</div><div class="job-addr">${h(j.address||'—')}</div></div>
         <span class="badge badge-closed">✓ Closed</span>
       </div>
-      <div class="job-card-body" style="font-size:12px;color:var(--ink3)">${j.notes||''}</div>
+      <div class="job-card-body" style="font-size:12px;color:var(--ink3)">${h(j.notes||'')}</div>
     </div>`).join(''):'';
   // Show return button if at least 1 job closed
   el('dash-return-btn').style.display=todayJobs.length>0?'':'none';
@@ -1556,13 +1752,13 @@ function openJobModal(){
     colors.forEach(c=>{
       const items=MATERIALS.filter(m=>(load.loaded[c]?.[m.id]||0)>0);if(!items.length)return;
       html+=`<div style="margin-bottom:10px">
-        <div style="font-size:10px;font-weight:800;text-transform:uppercase;color:var(--gold-d);margin-bottom:6px">${c}</div>
-        ${items.map(m=>{const out=load.loaded[c][m.id];return `<div class="mat-row">
-          <div><div class="mat-name" style="font-size:13px">${m.name}</div><div class="mat-sub">max ${out} ${m.unit}</div></div>
+        <div style="font-size:10px;font-weight:800;text-transform:uppercase;color:var(--gold-d);margin-bottom:6px">${h(c)}</div>
+        ${items.map(m=>{const out=Number(load.loaded[c][m.id])||0,st=Number(m.step)||1;return `<div class="mat-row">
+          <div><div class="mat-name" style="font-size:13px">${h(m.name)}</div><div class="mat-sub">max ${out} ${h(m.unit)}</div></div>
           <div class="qty-ctrl">
-            <button class="qty-btn" onclick="chQ('jm_${esc(c)}_${m.id}',-${m.step})">−</button>
-            <input class="qty-inp" id="jm_${esc(c)}_${m.id}" type="number" value="0" min="0" max="${out}" step="${m.step}">
-            <button class="qty-btn" onclick="chQ('jm_${esc(c)}_${m.id}',${m.step})">+</button>
+            <button class="qty-btn" onclick="chQ('jm_${esc(c)}_${esc(m.id)}',-${st})">−</button>
+            <input class="qty-inp" id="jm_${esc(c)}_${esc(m.id)}" type="number" value="0" min="0" max="${out}" step="${st}">
+            <button class="qty-btn" onclick="chQ('jm_${esc(c)}_${esc(m.id)}',${st})">+</button>
           </div>
         </div>`;}).join('')}
       </div>`;
@@ -1580,7 +1776,7 @@ function addFP(){
   if(!name||!qty){toast('Enter item and qty',true);return;}
   fpItems.push({name,qty,unit,cost});
   el('fp-name').value='';el('fp-qty').value='';el('fp-cost').value='';
-  el('fp-list').innerHTML=fpItems.map((f,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px"><span>${f.name} · ${f.qty} ${f.unit} · ${f.cost||'—'}</span><button class="btn btn-red btn-sm" onclick="fpItems.splice(${i},1);addFP.__refresh&&addFP.__refresh()">✕</button></div>`).join('');
+  el('fp-list').innerHTML=fpItems.map((f,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px"><span>${h(f.name)} · ${h(f.qty)} ${h(f.unit)} · ${h(f.cost||'—')}</span><button class="btn btn-red btn-sm" onclick="fpItems.splice(${i},1);addFP.__refresh&&addFP.__refresh()">✕</button></div>`).join('');
 }
 
 async function saveJob(){
@@ -1592,7 +1788,7 @@ async function saveJob(){
     used[c]={};
     MATERIALS.forEach(m=>{
       if((todayLoad.loaded[c]?.[m.id]||0)>0)
-        used[c][m.id]=parseFloat(el(`jm_${esc(c)}_${m.id}`)?.value)||0;
+        used[c][m.id]=parseFloat(el(`jm_${esc(c)}_${esc(m.id)}`)?.value)||0;
     });
   });
   const job={loadId:todayLoad.fid,jobNum:todayJobs.length+1,address,notes:el('jm-notes').value.trim(),used,fieldPurchases:[...fpItems],date:new Date().toISOString(),submittedBy:session.name};
@@ -1712,13 +1908,13 @@ async function processBoxScan(boxId, isManual=false){
     el('scan-pending-details').innerHTML=`
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--ink3)">Box ID</div>
-          <div style="font-size:15px;font-weight:800;font-family:'JetBrains Mono',monospace">${box.boxId}</div></div>
+          <div style="font-size:15px;font-weight:800;font-family:'JetBrains Mono',monospace">${h(box.boxId)}</div></div>
         <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--ink3)">Material</div>
-          <div style="font-size:15px;font-weight:800">${m?.name||box.materialId}</div></div>
+          <div style="font-size:15px;font-weight:800">${h(m?.name||box.materialId)}</div></div>
         <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--ink3)">Color</div>
-          <div style="font-size:15px;font-weight:700">${box.color}</div></div>
+          <div style="font-size:15px;font-weight:700">${h(box.color)}</div></div>
         <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--ink3)">Quantity</div>
-          <div style="font-size:15px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--green)">${box.qty} ${m?.unit||''}</div></div>
+          <div style="font-size:15px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--green)">${h(box.qty)} ${h(m?.unit||'')}</div></div>
       </div>
       ${isManual?'<div style="margin-top:8px;padding:6px 10px;background:var(--red-l);border-radius:6px;font-size:11px;font-weight:700;color:var(--red)">⚠️ Manual entry — will be logged for audit</div>':''}`;
     el('scan-pending').style.display='';
@@ -1763,8 +1959,8 @@ function renderConfirmedBoxes(){
     const m=MATERIALS.find(x=>x.id===b.materialId);
     return `<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;margin-bottom:8px;border-left:4px solid ${b._isManualEntry?'var(--red)':'var(--green)'}">
       <div>
-        <div style="font-size:13px;font-weight:800">📦 ${b.boxId} ${b._isManualEntry?'<span style="font-size:10px;color:var(--red);font-weight:600">MANUAL</span>':''}</div>
-        <div style="font-size:11px;color:var(--ink3);margin-top:2px">${m?.name||b.materialId} · ${b.color} · <span style="font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--green)">${b.qty} ${m?.unit||''}</span></div>
+        <div style="font-size:13px;font-weight:800">📦 ${h(b.boxId)} ${b._isManualEntry?'<span style="font-size:10px;color:var(--red);font-weight:600">MANUAL</span>':''}</div>
+        <div style="font-size:11px;color:var(--ink3);margin-top:2px">${h(m?.name||b.materialId)} · ${h(b.color)} · <span style="font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--green)">${h(b.qty)} ${h(m?.unit||'')}</span></div>
       </div>
       <button class="btn btn-red btn-sm" onclick="removeConfirmedBox(${i})">✕</button>
     </div>`;
@@ -1906,10 +2102,10 @@ async function processReturnBoxScan(boxId,isManual=false){
     pendingReturnBox=box;
     el('ret-scan-details').innerHTML=`
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--ink3)">Box</div><div style="font-size:15px;font-weight:800;font-family:'JetBrains Mono',monospace">${box.boxId}</div></div>
-        <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--ink3)">Material</div><div style="font-size:14px;font-weight:700">${m?.name||box.materialId}</div></div>
-        <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--ink3)">Color</div><div style="font-size:14px;font-weight:700">${box.color}</div></div>
-        <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--ink3)">Went out with</div><div style="font-size:14px;font-weight:700;color:var(--blue)">${box.qty} ${m?.unit||''}</div></div>
+        <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--ink3)">Box</div><div style="font-size:15px;font-weight:800;font-family:'JetBrains Mono',monospace">${h(box.boxId)}</div></div>
+        <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--ink3)">Material</div><div style="font-size:14px;font-weight:700">${h(m?.name||box.materialId)}</div></div>
+        <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--ink3)">Color</div><div style="font-size:14px;font-weight:700">${h(box.color)}</div></div>
+        <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--ink3)">Went out with</div><div style="font-size:14px;font-weight:700;color:var(--blue)">${h(box.qty)} ${h(m?.unit||'')}</div></div>
       </div>
       ${isManual?'<div style="margin-top:8px;padding:6px;background:var(--red-l);border-radius:6px;font-size:11px;font-weight:700;color:var(--red)">⚠️ Manual entry — logged for audit</div>':''}`;
     el('ret-status-select').style.display='';
@@ -2012,9 +2208,9 @@ function renderRetScannedBoxes(){
     return `<div class="card" style="padding:10px 14px;margin-bottom:8px;border-left:4px solid ${color}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div>
-          <div style="font-size:13px;font-weight:800">${icon} ${b.boxId} ${b.isManual?'<span style="font-size:10px;color:var(--red)">MANUAL</span>':''}</div>
-          <div style="font-size:11px;color:var(--ink3)">${b.materialName} · ${b.color}</div>
-          <div style="font-size:11px;font-weight:600;margin-top:2px">${b.statusLabel}</div>
+          <div style="font-size:13px;font-weight:800">${icon} ${h(b.boxId)} ${b.isManual?'<span style="font-size:10px;color:var(--red)">MANUAL</span>':''}</div>
+          <div style="font-size:11px;color:var(--ink3)">${h(b.materialName)} · ${h(b.color)}</div>
+          <div style="font-size:11px;font-weight:600;margin-top:2px">${h(b.statusLabel)}</div>
         </div>
         <button class="btn btn-outline btn-sm" onclick="removeRetBox(${i})">✕</button>
       </div>
@@ -2114,36 +2310,36 @@ async function buildHistory(){
 
 function rCardHTML(log,isAdmin){
   const bc=log.status==='approved'?'badge-approved':log.status==='open'?'badge-open':'badge-pending';
-  const bt=log.status==='approved'?`✅ ${log.approvedBy||''}`:log.status==='open'?'Open':'⏳ Pending';
+  const bt=log.status==='approved'?`✅ ${h(log.approvedBy||'')}`:log.status==='open'?'Open':'⏳ Pending';
   let body='';
   // Use dynamic colors from loaded data — not log.colors
   const colors=Object.keys(log.loaded||{});
   colors.forEach(c=>{
     const items=MATERIALS.filter(m=>(log.loaded?.[c]?.[m.id]||0)>0);if(!items.length)return;
-    body+=`<div style="margin-bottom:8px"><div style="font-size:10px;font-weight:800;color:var(--gold-d);text-transform:uppercase;margin-bottom:3px">${c}</div>
+    body+=`<div style="margin-bottom:8px"><div style="font-size:10px;font-weight:800;color:var(--gold-d);text-transform:uppercase;margin-bottom:3px">${h(c)}</div>
       <table class="stbl"><tr><th>Material</th><th style="text-align:right">Out</th><th style="text-align:right">Used</th><th style="text-align:right">Return</th></tr>
       ${items.map(m=>{const out=log.loaded[c][m.id];const u=log.used?.[c]?.[m.id]??'—';const r=log.used!=null?Math.max(0,out-(log.used[c]?.[m.id]??0)):'—';
-        return `<tr><td style="font-size:11px">${m.name}</td><td class="num" style="color:var(--blue);font-size:12px">${out}</td><td class="num" style="color:var(--red);font-size:12px">${u}</td><td class="num" style="color:var(--green);font-size:12px">${r}</td></tr>`;
+        return `<tr><td style="font-size:11px">${h(m.name)}</td><td class="num" style="color:var(--blue);font-size:12px">${h(out)}</td><td class="num" style="color:var(--red);font-size:12px">${h(u)}</td><td class="num" style="color:var(--green);font-size:12px">${h(r)}</td></tr>`;
       }).join('')}</table></div>`;
   });
   const fid=log.fid||'';
   const acts=isAdmin
-    ?`${log.status!=='approved'?`<button class="btn btn-green btn-sm" onclick="approveLog('${fid}',this)">✓ Approve</button>`:''}
-       <button class="btn btn-outline btn-sm" onclick="openSendModalById('${fid}')">📤</button>
-       <button class="btn btn-dark btn-sm" onclick="printLogById('${fid}')">🖨️</button>
-       <button class="btn btn-red btn-sm" onclick="deleteLog('${fid}')">🗑</button>`
-    :`<button class="btn btn-outline btn-sm" onclick="openSendModalById('${fid}')">📤</button>
-      <button class="btn btn-dark btn-sm" onclick="printLogById('${fid}')">🖨️</button>`;
-  return `<div class="rcard" id="rcard-${fid}">
+    ?`${log.status!=='approved'?`<button class="btn btn-green btn-sm" onclick="approveLog(${ja(fid)},this)">✓ Approve</button>`:''}
+       <button class="btn btn-outline btn-sm" onclick="openSendModalById(${ja(fid)})">📤</button>
+       <button class="btn btn-dark btn-sm" onclick="printLogById(${ja(fid)})">🖨️</button>
+       <button class="btn btn-red btn-sm" onclick="deleteLog(${ja(fid)})">🗑</button>`
+    :`<button class="btn btn-outline btn-sm" onclick="openSendModalById(${ja(fid)})">📤</button>
+      <button class="btn btn-dark btn-sm" onclick="printLogById(${ja(fid)})">🖨️</button>`;
+  return `<div class="rcard" id="rcard-${h(fid)}">
     <div class="rcard-hdr" style="background:var(--ink)"><div>
-      <div class="rcard-title">🚛 Truck ${log.truck}</div>
-      <div class="rcard-sub">Loaded: ${log.dateDisplay}</div>
-      ${log.jobDateDisplay&&log.jobDateDisplay!==log.dateDisplay?`<div style="font-size:10px;color:#f59e0b;margin-top:1px">Job: ${log.jobDateDisplay}</div>`:''}
-      ${log.jobId?`<div style="font-size:10px;color:#aaa;margin-top:1px">Job ID: ${log.jobId}</div>`:''}
-      ${log.odometer?`<div style="font-size:10px;color:#aaa;margin-top:1px">Odometer: ${log.odometer} mi</div>`:''}
-      ${isAdmin?`<div style="font-size:10px;color:#aaa;margin-top:1px">By: ${log.submittedBy}</div>`:''}
+      <div class="rcard-title">🚛 Truck ${h(log.truck)}</div>
+      <div class="rcard-sub">Loaded: ${h(log.dateDisplay)}</div>
+      ${log.jobDateDisplay&&log.jobDateDisplay!==log.dateDisplay?`<div style="font-size:10px;color:#f59e0b;margin-top:1px">Job: ${h(log.jobDateDisplay)}</div>`:''}
+      ${log.jobId?`<div style="font-size:10px;color:#aaa;margin-top:1px">Job ID: ${h(log.jobId)}</div>`:''}
+      ${log.odometer?`<div style="font-size:10px;color:#aaa;margin-top:1px">Odometer: ${h(log.odometer)} mi</div>`:''}
+      ${isAdmin?`<div style="font-size:10px;color:#aaa;margin-top:1px">By: ${h(log.submittedBy)}</div>`:''}
     </div><span class="badge ${bc}">${bt}</span></div>
-    <div class="rcard-body"><div style="font-size:11px;color:var(--ink3);margin-bottom:6px">Crew: ${(log.crew||[]).join(', ')||'—'}</div>${body}
+    <div class="rcard-body"><div style="font-size:11px;color:var(--ink3);margin-bottom:6px">Crew: ${h((log.crew||[]).join(', ')||'—')}</div>${body}
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px">${acts}</div></div>
   </div>`;
 }
@@ -2215,12 +2411,12 @@ async function buildInvSummary(){
       const total=colorEntries.reduce((s,[,q])=>s+q,0);
       html+=`<div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-          <div style="font-size:14px;font-weight:800">${m.name}</div>
-          <div style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:800;color:${total<0?'var(--red)':'var(--green)'}">${total} ${m.unit}</div>
+          <div style="font-size:14px;font-weight:800">${h(m.name)}</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:800;color:${total<0?'var(--red)':'var(--green)'}">${h(total)} ${h(m.unit)}</div>
         </div>
         <table class="stbl">
           <tr><th>Color</th><th style="text-align:right">In Warehouse</th></tr>
-          ${colorEntries.map(([c,q])=>`<tr><td>${c}</td><td class="num" style="color:${q<0?'var(--red)':q===0?'var(--ink3)':'var(--green)'}">${q} ${q<0?'⚠️':''}</td></tr>`).join('')}
+          ${colorEntries.map(([c,q])=>`<tr><td>${h(c)}</td><td class="num" style="color:${q<0?'var(--red)':q===0?'var(--ink3)':'var(--green)'}">${h(q)} ${q<0?'⚠️':''}</td></tr>`).join('')}
         </table>
         ${total<0?`<div style="font-size:11px;color:var(--red);font-weight:700;margin-top:8px">⚠️ Negative stock — check receipts</div>`:''}
       </div>`;
@@ -2233,23 +2429,23 @@ async function buildInvSummary(){
 }
 
 function buildInvCount(){
-  let html='';MATERIALS.forEach(m=>{COLORS.forEach(c=>{html+=`<div class="mat-row"><div><div class="mat-name" style="font-size:13px">${m.name}</div><div class="mat-sub">${c}</div></div><div class="qty-ctrl"><button class="qty-btn" onclick="chQ('inv_${m.id}__${esc(c)}',-${m.step})">−</button><input class="qty-inp" id="inv_${m.id}__${esc(c)}" type="number" value="0" min="0" step="${m.step}"><button class="qty-btn" onclick="chQ('inv_${m.id}__${esc(c)}',${m.step})">+</button></div></div>`;});});
+  let html='';MATERIALS.forEach(m=>{const st=Number(m.step)||1;COLORS.forEach(c=>{html+=`<div class="mat-row"><div><div class="mat-name" style="font-size:13px">${h(m.name)}</div><div class="mat-sub">${h(c)}</div></div><div class="qty-ctrl"><button class="qty-btn" onclick="chQ('inv_${esc(m.id)}__${esc(c)}',-${st})">−</button><input class="qty-inp" id="inv_${esc(m.id)}__${esc(c)}" type="number" value="0" min="0" step="${st}"><button class="qty-btn" onclick="chQ('inv_${esc(m.id)}__${esc(c)}',${st})">+</button></div></div>`;});});
   el('inv-count-list').innerHTML=`<div class="card">${html}</div>`;
 }
 
 async function saveInvCount(){
-  const counts={};MATERIALS.forEach(m=>{COLORS.forEach(c=>{const v=parseFloat(el(`inv_${m.id}__${esc(c)}`)?.value)||0;if(v>0)counts[`${m.id}__${c}`]=v;});});
+  const counts={};MATERIALS.forEach(m=>{COLORS.forEach(c=>{const v=parseFloat(el(`inv_${esc(m.id)}__${esc(c)}`)?.value)||0;if(v>0)counts[`${m.id}__${c}`]=v;});});
   try{await fbAdd('inventories',{date:new Date().toISOString(),dateDisplay:today(),counts,conductedBy:session.name});toast('✅ Inventory saved');invTab('summary');}catch(e){toast('Error',true);}
 }
 
 async function buildReceiveTab(){
   // Populate material select
-  el('recv-mat').innerHTML=MATERIALS.map(m=>`<option value="${m.id}">${m.name} (${m.unit})</option>`).join('');
+  el('recv-mat').innerHTML=MATERIALS.map(m=>`<option value="${h(m.id)}">${h(m.name)} (${h(m.unit)})</option>`).join('');
   // Populate color select
   const colorSel=el('recv-color');
   if(colorSel){
     colorSel.innerHTML='<option value="">— Select color —</option>'+
-      COLORS.map(c=>`<option value="${c}">${c}</option>`).join('')+
+      COLORS.map(c=>`<option value="${h(c)}">${h(c)}</option>`).join('')+
       '<option value="__other__">Other (type below)…</option>';
     colorSel.onchange=function(){
       const other=el('recv-color-other');
@@ -2265,10 +2461,10 @@ async function buildReceiveTab(){
       return `<div class="card" style="padding:10px 14px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div>
-            <div style="font-size:13px;font-weight:700">${m?.name||r.materialId} · ${r.color}</div>
-            <div style="font-size:11px;color:var(--ink3)">${r.dateDisplay||''} · ${r.ref||'—'} · ${r.receivedBy}</div>
+            <div style="font-size:13px;font-weight:700">${h(m?.name||r.materialId)} · ${h(r.color)}</div>
+            <div style="font-size:11px;color:var(--ink3)">${h(r.dateDisplay||'')} · ${h(r.ref||'—')} · ${h(r.receivedBy)}</div>
           </div>
-          <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:800;color:var(--green)">+${r.qty} ${m?.unit||''}</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:800;color:var(--green)">+${h(r.qty)} ${h(m?.unit||'')}</div>
         </div>
       </div>`;
     }).join('')||'<div style="color:var(--ink3);font-size:13px;text-align:center;padding:12px">No receipts yet.</div>';
@@ -2311,9 +2507,9 @@ async function printInventory(){
       });});
     });
     let rows='';
-    MATERIALS.forEach(m=>{if(!stock[m.id])return;Object.entries(stock[m.id]).forEach(([c,q])=>{if(q===0)return;rows+=`<tr><td>${m.name}</td><td>${c}</td><td>${q}</td><td style="font-size:10px;color:#666">${m.id==='ds'?q*10+' ft':m.unit}</td></tr>`;});});
+    MATERIALS.forEach(m=>{if(!stock[m.id])return;Object.entries(stock[m.id]).forEach(([c,q])=>{if(q===0)return;rows+=`<tr><td>${h(m.name)}</td><td>${h(c)}</td><td>${h(q)}</td><td style="font-size:10px;color:#666">${h(m.id==='ds'?q*10+' ft':m.unit)}</td></tr>`;});});
     el('print-sheet').innerHTML=`<div class="print-page">
-      <div class="print-hdr"><div><div class="print-logo">DANIEL GUTTER KING<span>Warehouse Stock Report</span></div></div><div class="print-meta"><strong>Current Stock</strong>${today()}<br>By: ${session.name}</div></div>
+      <div class="print-hdr"><div><div class="print-logo">DANIEL GUTTER KING<span>Warehouse Stock Report</span></div></div><div class="print-meta"><strong>Current Stock</strong>${today()}<br>By: ${h(session.name)}</div></div>
       <table class="ptbl"><tr><th>Material</th><th>Color</th><th>In Warehouse</th><th>Unit</th></tr>${rows||'<tr><td colspan="4" style="text-align:center;color:#888">No stock data</td></tr>'}</table>
       <div class="print-footer"><div class="sign-box">Counted by</div><div class="sign-box">Manager</div><div class="sign-box">Date</div></div>
     </div>`;window.print();
@@ -2418,6 +2614,7 @@ async function buildAdminSheets(){
 }
 
 async function buildAdminUsers(){
+  if(el('cc-pass')&&!el('cc-pass').value)el('cc-pass').value=genCode(10);
   el('users-active').innerHTML='<div class="spinner"></div>';
   try{
     const{orderBy}=fb();
@@ -2437,13 +2634,13 @@ async function buildAdminUsers(){
         html+=`<div style="background:#fff;border-radius:10px;padding:12px;margin-bottom:8px;border:1px solid var(--border)">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
             <div>
-              <div style="font-size:14px;font-weight:800">${u.name}</div>
-              <div style="font-size:11px;color:var(--ink3);margin-top:2px">ID: ${u.empId||'—'} · Registered: ${u.registeredAt?new Date(u.registeredAt).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—'}</div>
+              <div style="font-size:14px;font-weight:800">${h(u.name)}</div>
+              <div style="font-size:11px;color:var(--ink3);margin-top:2px">ID: ${h(u.empId||'—')} · Registered: ${u.registeredAt?new Date(u.registeredAt).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—'}</div>
             </div>
           </div>
           <div style="display:flex;gap:8px;margin-top:10px">
-            <button class="btn btn-red btn-sm" style="flex:1" onclick="rejectUser('${u.fid}','${u.name}','${u.empId}')">✕ Reject</button>
-            <button class="btn btn-green btn-sm" style="flex:1" onclick="approveUser('${u.fid}','${u.name}')">✓ Approve</button>
+            <button class="btn btn-red btn-sm" style="flex:1" onclick="rejectUser(${ja(u.fid)},${ja(u.name)},${ja(u.empId||'')})">✕ Reject</button>
+            <button class="btn btn-green btn-sm" style="flex:1" onclick="approveUser(${ja(u.fid)},${ja(u.name)})">✓ Approve</button>
           </div>
         </div>`;
       });
@@ -2458,10 +2655,11 @@ async function buildAdminUsers(){
       html+=approved.map(u=>`
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
           <div>
-            <div style="font-size:13px;font-weight:700">${u.name} <span class="badge badge-${u.role||'crew'}">${ROLES[u.role]||u.role}</span></div>
-            <div style="font-size:11px;color:var(--ink3)">${u.empId?`ID: ${u.empId}`:u.email||'—'}</div>
+            <div style="font-size:13px;font-weight:700">${h(u.name)} <span class="badge badge-${esc(u.role||'crew')}">${h(ROLES[u.role]||u.role)}</span></div>
+            <div style="font-size:11px;color:var(--ink3)">${h(u.empId?`ID: ${u.empId}`:u.email||'—')}${u.mustChangePassword?' · waiting for first sign-in':''}</div>
+            ${u.status!=='approved'?`<div style="font-size:11px;color:var(--red);font-weight:700">⚠️ Status "${h(u.status||'missing')}" — fix to "approved" in Firebase</div>`:''}
           </div>
-          ${u.fid!==session.uid?`<button class="btn btn-red btn-sm" onclick="removeUser('${u.fid}','${u.name}','${u.empId||''}')">Remove</button>`:'<span style="font-size:11px;color:var(--ink3)">You</span>'}
+          ${u.fid!==session.uid?`<button class="btn btn-red btn-sm" onclick="removeUser(${ja(u.fid)},${ja(u.name)},${ja(u.empId||'')})">Remove</button>`:'<span style="font-size:11px;color:var(--ink3)">You</span>'}
         </div>`).join('');
     } else {
       html+='<div style="color:var(--ink3);font-size:13px;padding:8px 0">No active users yet.</div>';
@@ -2481,35 +2679,66 @@ async function approveUser(fid,name){
   }catch(e){toast('Error approving user',true);}
 }
 
+// Frees the Employee ID with a NEW invite code, so the removed person cannot sign up
+// again with the old one. Their login stays in Firebase Authentication (deleting a
+// login needs a server); delete it there before giving the same ID to someone else.
+async function releaseUser(fid,empId){
+  await fbDel(`users/${fid}`);
+  if(empId){
+    try{await fbUpdate(`employeeIds/${empId}`,{used:false,assignedTo:'',assignedUid:'',inviteCode:genCode(8)});}
+    catch(e){if(e.code!=='not-found')throw e;}
+  }
+  await writeAuditLog({type:'crew_account_removed',targetUid:fid,empId:empId||''});
+}
+const LOGIN_NOTE=n=>`\n\nTo reuse this Employee ID for someone else, also delete the login ${n}@crew.dgk.internal in Firebase Console > Authentication.`;
 async function rejectUser(fid,name,empId){
-  if(!confirm(`Reject ${name}? This will delete their account and free up the Employee ID.`))return;
+  if(!confirm(`Reject ${name}? This deletes their profile and frees the Employee ID with a new invite code.`+(empId?LOGIN_NOTE(empId):'')))return;
   try{
-    await fbDel(`users/${fid}`);
-    if(empId)await fbUpdate(`employeeIds/${empId}`,{used:false,assignedTo:'',assignedUid:''});
+    await releaseUser(fid,empId);
     toast(`${name} rejected and removed`);
     buildAdminUsers();
   }catch(e){toast('Error rejecting user',true);}
+}
+// Was called by the Remove button but never defined (the button did nothing).
+async function removeUser(fid,name,empId){
+  if(!confirm(`Remove ${name}? They will no longer be able to use the app.`+(empId?LOGIN_NOTE(empId):'')))return;
+  try{
+    await releaseUser(fid,empId);
+    toast(`${name} removed`);
+    buildAdminUsers();
+  }catch(e){toast(e.code==='permission-denied'?'Only the Big Boss can remove managers':'Error removing user',true);}
 }
 
 async function buildEmpIds(){
   el('ids-list').innerHTML='<div class="spinner"></div>';
   try{const{orderBy}=fb();const ids=await fbQuery('employeeIds',orderBy('createdAt','desc'));
-    el('ids-list').innerHTML=ids.length?ids.map(i=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)"><div><div style="font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace">${i.fid}</div><div style="font-size:11px;color:var(--ink3)">${i.name||'—'} · ${i.used?`✅ ${i.assignedTo}`:'⏳ Not registered'}</div></div>${!i.used?`<button class="btn btn-red btn-sm" onclick="removeEmpId('${i.fid}')">Remove</button>`:''}</div>`).join(''):'<div style="color:var(--ink3);text-align:center;padding:12px;font-size:13px">No IDs yet.</div>';
+    el('ids-list').innerHTML=ids.length?ids.map(i=>{
+      const code=!i.used?(i.inviteCode
+        ?`<div style="font-size:12px;margin-top:4px">Invite code: <strong style="font-family:'JetBrains Mono',monospace;letter-spacing:2px">${h(i.inviteCode)}</strong> <button class="btn btn-outline btn-sm" style="padding:2px 8px" onclick="regenInviteCode(${ja(i.fid)})">New code</button></div>`
+        :`<div style="font-size:12px;margin-top:4px;color:var(--red)">No invite code yet <button class="btn btn-outline btn-sm" style="padding:2px 8px" onclick="regenInviteCode(${ja(i.fid)})">Create code</button></div>`):'';
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)"><div><div style="font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace">${h(i.fid)}</div><div style="font-size:11px;color:var(--ink3)">${h(i.name||'—')} · ${i.used?`✅ ${h(i.assignedTo)}`:'⏳ Not registered'}</div>${code}</div>${!i.used?`<button class="btn btn-red btn-sm" onclick="removeEmpId(${ja(i.fid)})">Remove</button>`:''}</div>`;
+    }).join(''):'<div style="color:var(--ink3);text-align:center;padding:12px;font-size:13px">No IDs yet.</div>';
   }catch(e){}
 }
 
 async function addEmpId(){
-  const id=el('new-empid').value.trim(),name=el('new-empname').value.trim();
-  if(id.length!==7||isNaN(id)){toast('ID must be 7 digits',true);return;}
+  const id=el('new-empid').value.trim(),name=el('new-empname').value.trim().slice(0,60);
+  if(!/^\d{7}$/.test(id)){toast('ID must be 7 digits',true);return;}
   try{const existing=await fbGet(`employeeIds/${id}`);if(existing){toast('ID already exists',true);return;}
-    await fbSet(`employeeIds/${id}`,{name,used:false,createdAt:new Date().toISOString(),createdBy:session.name});
-    el('new-empid').value='';el('new-empname').value='';toast(`✅ ID ${id} registered`);buildEmpIds();}catch(e){toast('Error',true);}
+    const inviteCode=genCode(8);
+    await fbSet(`employeeIds/${id}`,{name,used:false,inviteCode,createdAt:new Date().toISOString(),createdBy:session.name});
+    el('new-empid').value='';el('new-empname').value='';toast(`✅ ID ${id} registered · code ${inviteCode}`);buildEmpIds();}catch(e){toast('Error',true);}
+}
+
+// A new code invalidates the old one (e.g. if it was shared with the wrong person).
+async function regenInviteCode(id){
+  try{await fbUpdate(`employeeIds/${id}`,{inviteCode:genCode(8)});toast('New invite code created');buildEmpIds();}catch(e){toast('Error',true);}
 }
 
 async function removeEmpId(id){if(!confirm(`Remove ID ${id}?`))return;try{await fbDel(`employeeIds/${id}`);toast('Removed');buildEmpIds();}catch(e){}}
 
 function buildMgrMats(){
-  el('mat-mgr-list').innerHTML=MATERIALS.map((m,i)=>`<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;margin-bottom:8px"><div><div style="font-size:13px;font-weight:700">${m.name}</div><div style="font-size:11px;color:var(--ink3)">${m.unitLabel||m.unit} · step ${m.step}</div></div><button class="btn btn-red btn-sm" onclick="removeMaterial(${i})">Remove</button></div>`).join('');
+  el('mat-mgr-list').innerHTML=MATERIALS.map((m,i)=>`<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;margin-bottom:8px"><div><div style="font-size:13px;font-weight:700">${h(m.name)}</div><div style="font-size:11px;color:var(--ink3)">${h(m.unitLabel||m.unit)} · step ${h(m.step)}</div></div><button class="btn btn-red btn-sm" onclick="removeMaterial(${i})">Remove</button></div>`).join('');
 }
 
 async function addMaterial(){
@@ -2522,11 +2751,11 @@ async function addMaterial(){
 async function removeMaterial(i){if(!confirm(`Remove ${MATERIALS[i].name}?`))return;MATERIALS.splice(i,1);await fbSet('config/materials',{list:MATERIALS});toast('Removed');buildMgrMats();}
 
 async function buildBoxes(){
-  el('new-box-mat').innerHTML=MATERIALS.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
+  el('new-box-mat').innerHTML=MATERIALS.map(m=>`<option value="${h(m.id)}">${h(m.name)}</option>`).join('');
   const boxColorSel=el('new-box-color');
   if(boxColorSel){
     boxColorSel.innerHTML='<option value="">— Select color —</option>'+
-      COLORS.map(c=>`<option value="${c}">${c}</option>`).join('')+
+      COLORS.map(c=>`<option value="${h(c)}">${h(c)}</option>`).join('')+
       '<option value="__other__">Other (type below)…</option>';
     boxColorSel.onchange=function(){
       const other=el('new-box-color-other');
@@ -2536,7 +2765,7 @@ async function buildBoxes(){
   el('boxes-list').innerHTML='<div class="spinner"></div>';
   try{const{orderBy}=fb();const boxes=await fbQuery('boxes',orderBy('createdAt','desc'));
     el('boxes-list').innerHTML=boxes.length?boxes.map(b=>{const m=MATERIALS.find(x=>x.id===b.materialId);
-      return `<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;margin-bottom:8px"><div><div style="font-size:13px;font-weight:700">📦 ${b.boxId}</div><div style="font-size:11px;color:var(--ink3)">${m?.name||b.materialId} · ${b.qty} ${m?.unit||''} · ${b.color}</div><div style="font-size:10px;font-weight:700;margin-top:2px;color:${b.truck?'#b45309':'var(--green)'}">${b.truck?`On Truck: ${b.truck}`:'In Warehouse'}</div></div><div style="display:flex;gap:5px;flex-direction:column"><button class="btn btn-dark btn-sm" onclick="showQR('${b.fid}','${b.boxId}',${b.qty})">QR</button><button class="btn btn-red btn-sm" onclick="deleteBox('${b.fid}')">🗑</button></div></div>`;
+      return `<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;margin-bottom:8px"><div><div style="font-size:13px;font-weight:700">📦 ${h(b.boxId)}</div><div style="font-size:11px;color:var(--ink3)">${h(m?.name||b.materialId)} · ${h(b.qty)} ${h(m?.unit||'')} · ${h(b.color)}</div><div style="font-size:10px;font-weight:700;margin-top:2px;color:${b.truck?'#b45309':'var(--green)'}">${b.truck?`On Truck: ${h(b.truck)}`:'In Warehouse'}</div></div><div style="display:flex;gap:5px;flex-direction:column"><button class="btn btn-dark btn-sm" onclick="showQR(${ja(b.fid)},${ja(b.boxId)},${ja(b.qty)})">QR</button><button class="btn btn-red btn-sm" onclick="deleteBox(${ja(b.fid)})">🗑</button></div></div>`;
     }).join(''):'<div class="empty"><div class="empty-icon">📦</div><h3>No boxes yet</h3></div>';
   }catch(e){}
 }
@@ -2566,14 +2795,14 @@ async function deleteBox(fid){if(!confirm('Delete box?'))return;try{await fbDel(
 function showQR(fid,boxId,qty){
   const appUrl=window.location.href.split('?')[0];
   const qrUrl=`${appUrl}?box=${encodeURIComponent(boxId)}`;
-  el('qr-modal-body').innerHTML=`<div style="text-align:center;padding:14px;background:#fff;border:2px solid var(--border);border-radius:12px;margin-bottom:14px"><div id="qr_${fid}"></div><div style="font-size:14px;font-weight:800;margin-top:8px">📦 ${boxId}</div><div style="font-size:11px;color:var(--ink3);margin-top:3px">Qty: ${qty} · Scan to register on truck</div><div style="font-size:9px;color:var(--ink3);margin-top:5px;word-break:break-all">${qrUrl}</div></div>`;
+  el('qr-modal-body').innerHTML=`<div style="text-align:center;padding:14px;background:#fff;border:2px solid var(--border);border-radius:12px;margin-bottom:14px"><div id="qr_${esc(fid)}"></div><div style="font-size:14px;font-weight:800;margin-top:8px">📦 ${h(boxId)}</div><div style="font-size:11px;color:var(--ink3);margin-top:3px">Qty: ${h(qty)} · Scan to register on truck</div><div style="font-size:9px;color:var(--ink3);margin-top:5px;word-break:break-all">${h(qrUrl)}</div></div>`;
   el('qr-modal').classList.add('open');
-  setTimeout(()=>{try{new QRCode(el(`qr_${fid}`),{text:qrUrl,width:180,height:180,colorDark:'#1a1a1a',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.H});}catch(e){}},100);
+  setTimeout(()=>{try{new QRCode(el(`qr_${esc(fid)}`),{text:qrUrl,width:180,height:180,colorDark:'#1a1a1a',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.H});}catch(e){}},100);
 }
 
 async function buildPrintSelector(){
   try{const{orderBy}=fb();const logs=await fbQuery('logs',orderBy('date','desc'));
-    el('print-selector').innerHTML=logs.length?logs.map(l=>`<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;margin-bottom:8px"><div><div style="font-size:13px;font-weight:700">Truck ${l.truck}</div><div style="font-size:11px;color:var(--ink3)">${l.dateDisplay}</div></div><button class="btn btn-dark btn-sm" onclick="printLogById('${l.fid}')">🖨️ Print</button></div>`).join(''):'<div class="empty"><div class="empty-icon">📭</div><h3>No logs</h3></div>';
+    el('print-selector').innerHTML=logs.length?logs.map(l=>`<div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;margin-bottom:8px"><div><div style="font-size:13px;font-weight:700">Truck ${h(l.truck)}</div><div style="font-size:11px;color:var(--ink3)">${h(l.dateDisplay)}</div></div><button class="btn btn-dark btn-sm" onclick="printLogById(${ja(l.fid)})">🖨️ Print</button></div>`).join(''):'<div class="empty"><div class="empty-icon">📭</div><h3>No logs</h3></div>';
   }catch(e){}
 }
 
@@ -2591,7 +2820,7 @@ async function printLog(log){
     el('print-sheet').innerHTML=`<div class="print-page">
       <div class="print-hdr">
         <div><div class="print-logo">GUTTERKREW<span>Daily Load Sheet · Powered by TECC</span></div></div>
-        <div class="print-meta"><strong>Truck ${log.truck}</strong>Odometer: ${log.odometer||'—'} mi<br>Job ID: ${log.jobId||'—'}<br>Loaded: ${log.dateDisplay}<br>By: ${log.submittedBy}</div>
+        <div class="print-meta"><strong>Truck ${h(log.truck)}</strong>Odometer: ${h(log.odometer||'—')} mi<br>Job ID: ${h(log.jobId||'—')}<br>Loaded: ${h(log.dateDisplay)}<br>By: ${h(log.submittedBy)}</div>
       </div>
       <div style="text-align:center;padding:40px;color:#888">No material data available for this load.</div>
       <div class="print-footer"><div class="sign-box">Driver Signature</div><div class="sign-box">Manager Signature</div><div class="sign-box">Date</div></div>
@@ -2606,26 +2835,26 @@ async function printLog(log){
       jobsHtml='<div class="print-section-title">Jobs Breakdown</div>';
       jobs.forEach(j=>{
         const jItems=items.filter(m=>(j.used?.[c]?.[m.id]||0)>0);if(!jItems.length)return;
-        jobsHtml+=`<div class="print-job-block"><div class="print-job-title">Job ${j.jobNum}: ${j.address}</div>
+        jobsHtml+=`<div class="print-job-block"><div class="print-job-title">Job ${h(j.jobNum)}: ${h(j.address)}</div>
           <table class="ptbl"><tr><th>Material</th><th>Used</th></tr>
-          ${jItems.map(m=>`<tr><td>${m.name}</td><td class="td-used">${j.used[c][m.id]}</td></tr>`).join('')}
-          </table>${(j.fieldPurchases||[]).length?`<div style="font-size:10px;margin-top:5px;color:#888">Field Purchases: ${j.fieldPurchases.map(f=>`${f.name} ×${f.qty} ${f.unit} (${f.cost||f.costInfo||'—'})`).join(', ')}</div>`:''}</div>`;
+          ${jItems.map(m=>`<tr><td>${h(m.name)}</td><td class="td-used">${h(j.used[c][m.id])}</td></tr>`).join('')}
+          </table>${(j.fieldPurchases||[]).length?`<div style="font-size:10px;margin-top:5px;color:#888">Field Purchases: ${h(j.fieldPurchases.map(f=>`${f.name} ×${f.qty} ${f.unit} (${f.cost||f.costInfo||'—'})`).join(', '))}</div>`:''}</div>`;
       });
     }
     pages+=`<div class="print-page">
       <div class="print-hdr">
         <div><div class="print-logo">GUTTERKREW<span>Daily Load Sheet · Powered by TECC</span></div></div>
-        <div class="print-meta"><strong>Truck ${log.truck}</strong>Odometer: ${log.odometer||'—'} mi<br>Job ID: ${log.jobId||'—'}<br>Address: ${log.job||'—'}<br>Loaded: ${log.dateDisplay}${log.jobDateDisplay&&log.jobDateDisplay!==log.dateDisplay?`<br>Job: ${log.jobDateDisplay}`:''}<br>Crew: ${(log.crew||[]).join(', ')||'—'}<br>By: ${log.submittedBy}</div>
+        <div class="print-meta"><strong>Truck ${h(log.truck)}</strong>Odometer: ${h(log.odometer||'—')} mi<br>Job ID: ${h(log.jobId||'—')}<br>Address: ${h(log.job||'—')}<br>Loaded: ${h(log.dateDisplay)}${log.jobDateDisplay&&log.jobDateDisplay!==log.dateDisplay?`<br>Job: ${h(log.jobDateDisplay)}`:''}<br>Crew: ${h((log.crew||[]).join(', ')||'—')}<br>By: ${h(log.submittedBy)}</div>
       </div>
-      <div class="print-section-title">Color: ${c}</div>
+      <div class="print-section-title">Color: ${h(c)}</div>
       <table class="ptbl">
         <tr><th>Material</th><th>Unit</th><th>Out</th><th>Used</th><th>Return</th></tr>
         ${items.map(m=>{const out=log.loaded[c][m.id];const u=log.used?.[c]?.[m.id]??0;const r=log.used!=null?Math.max(0,out-u):'—';
-          return `<tr><td>${m.name}</td><td style="text-align:right;font-size:10px;color:#666">${m.unitLabel||m.unit}</td><td class="td-out">${out}</td><td class="td-used">${log.used!=null?u:'—'}</td><td class="td-ret">${r}</td></tr>`;
+          return `<tr><td>${h(m.name)}</td><td style="text-align:right;font-size:10px;color:#666">${h(m.unitLabel||m.unit)}</td><td class="td-out">${h(out)}</td><td class="td-used">${h(log.used!=null?u:'—')}</td><td class="td-ret">${h(r)}</td></tr>`;
         }).join('')}
       </table>
       ${jobsHtml}
-      ${log.status==='approved'?`<div class="print-status">✅ Approved by ${log.approvedBy}</div>`:'<div class="print-status" style="border-color:#b45309;color:#78350f">⏳ Pending Approval</div>'}
+      ${log.status==='approved'?`<div class="print-status">✅ Approved by ${h(log.approvedBy)}</div>`:'<div class="print-status" style="border-color:#b45309;color:#78350f">⏳ Pending Approval</div>'}
       <div class="print-footer"><div class="sign-box">Driver Signature</div><div class="sign-box">Manager Signature</div><div class="sign-box">Date</div></div>
     </div>`;
   });
@@ -2660,7 +2889,7 @@ function addRecipient(){
 }
 function removeRecipient(i){recipients.splice(i,1);renderRecipients();}
 function renderRecipients(){
-  el('recipients-list').innerHTML=recipients.map((r,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)"><span style="font-size:12px">${r}</span><button class="btn btn-red btn-sm" onclick="removeRecipient(${i})">✕</button></div>`).join('');
+  el('recipients-list').innerHTML=recipients.map((r,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)"><span style="font-size:12px">${h(r)}</span><button class="btn btn-red btn-sm" onclick="removeRecipient(${i})">✕</button></div>`).join('');
 }
 
 function openSendModal(log){
@@ -2689,8 +2918,11 @@ function sendVia(method){
 document.addEventListener('fbReady',()=>{
   const{auth,onAuthStateChanged}=fb();
   onAuthStateChanged(auth,async user=>{
+    if(registering)return; // a sign-up is in progress; doRegister handles the screens
     if(user)await afterLogin(user);
-    else{showScreen('s-auth');showAuth('login');}
+    // Signed out: go to the sign-in screen, but do not hide a sign-up error or
+    // the "pending approval" message that is already on the sign-in screen.
+    else if(!el('s-auth').classList.contains('active')){showScreen('s-auth');showAuth('login');}
   });
 });
 setTimeout(()=>{if(!window._fbReady){showScreen('s-auth');}},1500);
