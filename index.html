@@ -359,7 +359,11 @@ body.authed .sidebar{display:flex}
 .td-out{color:#1d4ed8}.td-used{color:#dc2626}.td-ret{color:#15803d}
 .print-section-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;border-left:4px solid #C9A227;padding-left:8px;margin:14px 0 6px;color:#444}
 .print-footer{margin-top:20px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px}
-.print-credit{margin-top:14px;font-size:9px;color:#888;text-align:right}
+.print-credit{margin-top:14px;font-size:9px;color:#888;display:flex;justify-content:space-between;gap:12px;border-top:1px solid #e2ddd6;padding-top:6px}
+.print-brand{display:flex;align-items:center;gap:12px}
+.print-clogo{max-height:56px;max-width:140px;object-fit:contain}
+.print-shield{width:40px;height:48px;flex-shrink:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.print-contact{font-size:10px;color:#444;margin-top:4px}
 .sign-box{border-top:1.5px solid #1a1a1a;padding-top:5px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#888}
 .print-status{margin-top:10px;padding:6px 12px;border:2px solid #15803d;border-radius:6px;font-size:11px;font-weight:700;color:#14532d;display:inline-block}
 .print-job-block{margin-bottom:14px;padding:10px;border:1px solid #e2ddd6;border-radius:6px}
@@ -1079,14 +1083,30 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 
 // ═══════════════ PRODUCT + CUSTOMER CONFIG ═══════════════
 // 29Cyber CrewTrack is a Twenty Nine Cyber product licensed to each company.
-// To set the app up for another company, change only COMPANY (and the
-// firebaseConfig at the top, one Firebase project per company).
-const APP={name:'29Cyber CrewTrack',version:'2.0.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+// One Firebase project per company (firebaseConfig at the top).
+// The customer's name, contact and logo are NOT in this file: they live in the
+// Firestore document config/company, which only 29 Cyber edits, in the
+// Firebase console (the security rules block every write from the app).
+// No document = the app and its printed sheets show the 29 Cyber brand.
+const APP={name:'29Cyber CrewTrack',version:'2.1.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
-  name:'Gutter King',              // shown only after sign-in (top bar, side menu); never on the public sign-in screen
-  printName:'Daniel Gutter King',  // header of printed sheets
   crewDomain:'crew.dgk.internal'   // crew sign-in: <Employee ID>@<crewDomain>
 };
+let CUSTOMER=null;  // {name, printName, phone, email, address, logoUrl} from config/company
+
+// Accept only short text fields and a safe logo link (https or a file on this site).
+function cleanCompany(d){
+  if(!d||typeof d!=='object')return null;
+  const s=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';
+  const name=s(d.name);if(!name)return null;
+  let logoUrl=s(d.logoUrl,500);
+  if(logoUrl&&!(/^https:\/\/[^\s"'<>]+$/.test(logoUrl)||/^[\w\-][\w\-.\/]*$/.test(logoUrl)))logoUrl='';
+  return {name,printName:s(d.printName)||name,phone:s(d.phone,40),email:s(d.email,80),address:s(d.address,160),logoUrl};
+}
+async function loadCompany(){
+  try{CUSTOMER=cleanCompany(await fbGet('config/company'));}catch(e){CUSTOMER=null;}
+  applyBrand();
+}
 
 // Phone: the side menu opens as a drawer.
 function toggleNav(open){const o=open===undefined?!document.body.classList.contains('nav-open'):open;document.body.classList.toggle('nav-open',o);}
@@ -1100,8 +1120,8 @@ function toggleTheme(){
 }
 function applyBrand(){
   document.querySelectorAll('.app-ver').forEach(e=>e.textContent=APP.version);
-  if(el('tb-company'))el('tb-company').textContent=COMPANY.name;
-  if(el('side-company'))el('side-company').textContent=COMPANY.name;
+  if(el('tb-company'))el('tb-company').textContent=CUSTOMER?.name||'';
+  if(el('side-company'))el('side-company').textContent=CUSTOMER?.name||'';
   if(document.documentElement.getAttribute('data-theme')==='sun'&&el('sun-btn'))el('sun-btn').innerHTML='<i class="ti ti-moon"></i>';
 }
 
@@ -1442,7 +1462,7 @@ async function _afterLogin(user){
     el('load-date').value=today();
     const now=new Date();el('job-date').value=now.toISOString().split('T')[0];
     el('dash-date').textContent=today();
-    await loadAppConfig();
+    await Promise.all([loadAppConfig(),loadCompany()]);
     await syncOfflineQueue();
     // Restore today's load from localStorage
     try{
@@ -1468,7 +1488,7 @@ async function _afterLogin(user){
 }
 
 async function doLogout(){
-  session=null;todayLoad=null;todayJobs=[];crewList=[];selColors=[];extraMats=[];fpItems=[];recipients=[];
+  session=null;CUSTOMER=null;applyBrand();todayLoad=null;todayJobs=[];crewList=[];selColors=[];extraMats=[];fpItems=[];recipients=[];
   try{await fb().signOut(fb().auth);}catch(e){}
   document.body.classList.remove('authed','nav-open');
   if(el('bell-btn'))el('bell-btn').style.display='none';
@@ -2584,6 +2604,7 @@ function rCardHTML(log,isAdmin){
       <div class="rcard-title">🚛 Truck ${h(log.truck)}</div>
       <div class="rcard-sub">Loaded: ${h(log.dateDisplay)}</div>
       ${log.jobDateDisplay&&log.jobDateDisplay!==log.dateDisplay?`<div class="rcard-meta hi">Job: ${h(log.jobDateDisplay)}</div>`:''}
+      <div class="rcard-meta">Doc: ${h(docNumber(log))}</div>
       ${log.jobId?`<div class="rcard-meta">Job ID: ${h(log.jobId)}</div>`:''}
       ${log.odometer?`<div class="rcard-meta">Odometer: ${h(log.odometer)} mi</div>`:''}
       ${isAdmin?`<div class="rcard-meta">By: ${h(log.submittedBy)}</div>`:''}
@@ -2758,9 +2779,10 @@ async function printInventory(){
     let rows='';
     MATERIALS.forEach(m=>{if(!stock[m.id])return;Object.entries(stock[m.id]).forEach(([c,q])=>{if(q===0)return;rows+=`<tr><td>${h(m.name)}</td><td>${h(c)}</td><td>${h(q)}</td><td style="font-size:10px;color:#666">${h(m.id==='ds'?q*10+' ft':m.unit)}</td></tr>`;});});
     el('print-sheet').innerHTML=`<div class="print-page">
-      <div class="print-hdr"><div><div class="print-logo">${h(COMPANY.printName)}<span>Warehouse Stock Report · ${APP.name}</span></div></div><div class="print-meta"><strong>Current Stock</strong>${today()}<br>By: ${h(session.name)}</div></div>
+      ${printHeader('Warehouse Stock Report',`<strong>Current Stock</strong>Doc: ${h(stockDocNo())}<br>${today()}<br>By: ${h(session.name)}`)}
       <table class="ptbl"><tr><th>Material</th><th>Color</th><th>In Warehouse</th><th>Unit</th></tr>${rows||'<tr><td colspan="4" style="text-align:center;color:#888">No stock data</td></tr>'}</table>
       <div class="print-footer"><div class="sign-box">Counted by</div><div class="sign-box">Manager</div><div class="sign-box">Date</div></div>
+      ${printCredit(stockDocNo(),1,1)}
     </div>`;window.print();
   }catch(e){toast('Error generating report',true);}
 }
@@ -2813,7 +2835,7 @@ async function exportAllData(){
     const exportData={
       exportDate:new Date().toISOString(),
       exportedBy:session.name,
-      app:`${APP.name} v${APP.version} · ${APP.vendor}`,company:COMPANY.name,
+      app:`${APP.name} v${APP.version} · ${APP.vendor}`,company:CUSTOMER?.name||'',
       data:{logs,jobs,receipts,boxes,users,materials:MATERIALS,colors:COLORS}
     };
     const blob=new Blob([JSON.stringify(exportData,null,2)],{type:'application/json'});
@@ -3079,23 +3101,46 @@ async function buildPrintSelector(){
 }
 
 // ═══════════════════════ PRINT ════════════════════════════════════
+// Every sheet: customer header (logo, name, contact), 29 Cyber credit,
+// document number and page number in the footer.
+function docNumber(log){
+  const d=log.date?new Date(log.date):null;
+  const ymd=d&&!isNaN(d)?`${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`:'00000000';
+  return `LD-${ymd}-${String(log.fid||'').slice(0,6).toUpperCase()||'XXXXXX'}`;
+}
+function stockDocNo(){
+  const d=new Date(),p=n=>String(n).padStart(2,'0');
+  return `SR-${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+function printHeader(docType,metaHtml){
+  const c=CUSTOMER;
+  const logo=c?.logoUrl?`<img class="print-clogo" src="${h(c.logoUrl)}" alt="">`:`<span class="shield print-shield"></span>`;
+  const contact=c?[c.phone,c.email,c.address].filter(Boolean).map(h).join(' · '):'';
+  return `<div class="print-hdr"><div class="print-brand">${logo}<div>
+      <div class="print-logo">${h(c?c.printName:APP.name)}<span>${h(docType)}</span></div>
+      ${contact?`<div class="print-contact">${contact}</div>`:''}</div></div>
+    <div class="print-meta">${metaHtml}</div></div>`;
+}
+function printCredit(docNo,page,pages){
+  return `<div class="print-credit"><span>${docNo?'Doc '+h(docNo):''}${pages>1?` · Page ${page} of ${pages}`:''}</span><span>${h(APP.name)} v${h(APP.version)} · Created by ${h(APP.author)} · ${h(APP.vendor)}</span></div>`;
+}
+
 async function printLog(log){
   let jobs=[];
   try{const{where}=fb();jobs=await fbQuery('jobs',where('loadId','==',log.fid));}catch(e){}
 
   // Use dynamic colors from loaded data — not log.colors
   const colors=Object.keys(log.loaded||{});
-  let pages='';
+  const docNo=docNumber(log);
+  const pageList=[];
 
   if(!colors.length&&!(log.returnedBoxes||[]).length){
     // Fallback: show box-based report
     el('print-sheet').innerHTML=`<div class="print-page">
-      <div class="print-hdr">
-        <div><div class="print-logo">${h(COMPANY.printName)}<span>Daily Load Sheet · ${APP.name}</span></div></div>
-        <div class="print-meta"><strong>Truck ${h(log.truck)}</strong>Odometer: ${h(log.odometer||'—')} mi<br>Job ID: ${h(log.jobId||'—')}<br>Loaded: ${h(log.dateDisplay)}<br>By: ${h(log.submittedBy)}</div>
-      </div>
+      ${printHeader('Daily Load Sheet',`<strong>Truck ${h(log.truck)}</strong>Doc: ${h(docNo)}<br>Odometer: ${h(log.odometer||'—')} mi<br>Job ID: ${h(log.jobId||'—')}<br>Loaded: ${h(log.dateDisplay)}<br>By: ${h(log.submittedBy)}`)}
       <div style="text-align:center;padding:40px;color:#888">No material data available for this load.</div>
       <div class="print-footer"><div class="sign-box">Driver Signature</div><div class="sign-box">Manager Signature</div><div class="sign-box">Date</div></div>
+      ${printCredit(docNo,1,1)}
     </div>`;
     window.print();return;
   }
@@ -3113,11 +3158,8 @@ async function printLog(log){
           </table>${(j.fieldPurchases||[]).length?`<div style="font-size:10px;margin-top:5px;color:#888">Field Purchases: ${h(j.fieldPurchases.map(f=>`${f.name} ×${f.qty} ${f.unit} (${f.cost||f.costInfo||'—'})`).join(', '))}</div>`:''}</div>`;
       });
     }
-    pages+=`<div class="print-page">
-      <div class="print-hdr">
-        <div><div class="print-logo">${h(COMPANY.printName)}<span>Daily Load Sheet · ${APP.name}</span></div></div>
-        <div class="print-meta"><strong>Truck ${h(log.truck)}</strong>Odometer: ${h(log.odometer||'—')} mi<br>Job ID: ${h(log.jobId||'—')}<br>Address: ${h(log.job||'—')}<br>Loaded: ${h(log.dateDisplay)}${log.jobDateDisplay&&log.jobDateDisplay!==log.dateDisplay?`<br>Job: ${h(log.jobDateDisplay)}`:''}<br>Crew: ${h((log.crew||[]).join(', ')||'—')}<br>By: ${h(log.submittedBy)}</div>
-      </div>
+    pageList.push((n,total)=>`<div class="print-page">
+      ${printHeader('Daily Load Sheet',`<strong>Truck ${h(log.truck)}</strong>Doc: ${h(docNo)}<br>Odometer: ${h(log.odometer||'—')} mi<br>Job ID: ${h(log.jobId||'—')}<br>Address: ${h(log.job||'—')}<br>Loaded: ${h(log.dateDisplay)}${log.jobDateDisplay&&log.jobDateDisplay!==log.dateDisplay?`<br>Job: ${h(log.jobDateDisplay)}`:''}<br>Crew: ${h((log.crew||[]).join(', ')||'—')}<br>By: ${h(log.submittedBy)}`)}
       <div class="print-section-title">Color: ${h(c)}</div>
       <table class="ptbl">
         <tr><th>Material</th><th>Unit</th><th>Out</th><th>Used</th><th>Return</th></tr>
@@ -3128,16 +3170,17 @@ async function printLog(log){
       ${jobsHtml}
       ${log.status==='approved'?`<div class="print-status">✅ Approved by ${h(log.approvedBy)}</div>`:'<div class="print-status" style="border-color:#b45309;color:#78350f">⏳ Pending Approval</div>'}
       <div class="print-footer"><div class="sign-box">Driver Signature</div><div class="sign-box">Manager Signature</div><div class="sign-box">Date</div></div>
-      <div class="print-credit">${APP.name} v${APP.version} · ${APP.vendor}</div>
-    </div>`;
+      ${printCredit(docNo,n,total)}
+    </div>`);
   });
+  const pages=pageList.map((f,i)=>f(i+1,pageList.length)).join('');
   el('print-sheet').innerHTML=pages||'<div class="print-page"><p>No data to print.</p></div>';
   window.print();
 }
 
 // ═══════════════════════ SEND ════════════════════════════════════
 function buildReportText(log){
-  let t=`📋 DAILY LOAD SHEET — ${COMPANY.printName.toUpperCase()}\nLoaded: ${log.dateDisplay}`;
+  let t=`📋 DAILY LOAD SHEET — ${(CUSTOMER?CUSTOMER.printName:APP.name).toUpperCase()}\nDoc: ${docNumber(log)}\nLoaded: ${log.dateDisplay}`;
   if(log.jobDateDisplay&&log.jobDateDisplay!==log.dateDisplay)t+=`\nJob Date: ${log.jobDateDisplay}`;
   t+=`\nTruck: ${log.truck}`;
   if(log.odometer)t+=`\nOdometer: ${log.odometer} mi`;
@@ -3151,6 +3194,7 @@ function buildReportText(log){
     t+='\n';
   });
   t+=`Status: ${log.status==='approved'?'✅ Approved by '+log.approvedBy:'⏳ Pending Approval'}`;
+  t+=`\n\n— ${APP.name} · ${APP.vendor}`;
   return t;
 }
 
