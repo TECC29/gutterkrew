@@ -102,6 +102,11 @@ input[type=number]{font-family:'JetBrains Mono',monospace;font-size:16px}
 .btn-sm{padding:7px 12px;font-size:12px;border-radius:7px}
 
 /* BADGE */
+.rcard{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:12px}
+.rcard-hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:12px 14px;color:#fff}
+.rcard-title{font-size:15px;font-weight:800;color:#fff}
+.rcard-sub{font-size:11px;color:#d6d3d1;margin-top:2px}
+.rcard-body{padding:12px 14px}
 .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px}
 .badge-pending{background:var(--gold-l);color:var(--gold-d)}
 .badge-approved{background:var(--green-l);color:var(--green)}
@@ -952,6 +957,9 @@ const esc=s=>(s||'').replace(/[^a-zA-Z0-9]/g,'_');
 // ja() -> a value passed as an argument inside an onclick="..." attribute.
 const h=s=>String(s??'').replace(/[&<>"'`]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','`':'&#96;'}[c]));
 const ja=s=>h(JSON.stringify(String(s??'')));
+// Newest first by the first field that exists (string dates or Firestore timestamps).
+const _ts=v=>v?.toMillis?v.toMillis():(Date.parse(v)||0);
+const byNewest=(rows,...f)=>rows.slice().sort((a,b)=>{const ta=_ts(f.map(k=>a[k]).find(Boolean)),tb=_ts(f.map(k=>b[k]).find(Boolean));return tb-ta;});
 const today=()=>new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
 
 function toast(msg,err=false){
@@ -2558,7 +2566,7 @@ async function exportAllData(){
       fbQuery('jobs',orderBy('date','desc')).catch(()=>[]),
       fbQuery('receipts',orderBy('createdAt','desc')).catch(()=>[]),
       fbQuery('boxes',orderBy('createdAt','desc')).catch(()=>[]),
-      fbQuery('users',orderBy('registeredAt','desc')).catch(()=>[])
+      fbQuery('users').catch(()=>[])
     ]);
     const exportData={
       exportDate:new Date().toISOString(),
@@ -2618,7 +2626,9 @@ async function buildAdminUsers(){
   el('users-active').innerHTML='<div class="spinner"></div>';
   try{
     const{orderBy}=fb();
-    const users=await fbQuery('users',orderBy('registeredAt','desc'));
+    // No orderBy here: Firestore hides documents that lack the ordered field
+    // (e.g. accounts created by hand in the console). Sort in the app instead.
+    const users=byNewest(await fbQuery('users'),'registeredAt','approvedAt');
     const pending=users.filter(u=>u.status==='pending');
     const approved=users.filter(u=>u.status!=='pending');
 
@@ -2711,14 +2721,28 @@ async function removeUser(fid,name,empId){
 
 async function buildEmpIds(){
   el('ids-list').innerHTML='<div class="spinner"></div>';
-  try{const{orderBy}=fb();const ids=await fbQuery('employeeIds',orderBy('createdAt','desc'));
+  try{const[ids,users]=await Promise.all([fbQuery('employeeIds').then(r=>byNewest(r,'createdAt')),fbQuery('users')]);
+    // An ID is orphaned when it is marked used but no profile owns it any more
+    // (e.g. the account was deleted in the Firebase console).
+    const owned=new Set();users.forEach(u=>{owned.add('uid:'+u.fid);if(u.empId)owned.add('emp:'+u.empId);});
+    const isOrphan=i=>i.used&&!owned.has('uid:'+i.assignedUid)&&!owned.has('emp:'+i.fid);
     el('ids-list').innerHTML=ids.length?ids.map(i=>{
       const code=!i.used?(i.inviteCode
         ?`<div style="font-size:12px;margin-top:4px">Invite code: <strong style="font-family:'JetBrains Mono',monospace;letter-spacing:2px">${h(i.inviteCode)}</strong> <button class="btn btn-outline btn-sm" style="padding:2px 8px" onclick="regenInviteCode(${ja(i.fid)})">New code</button></div>`
         :`<div style="font-size:12px;margin-top:4px;color:var(--red)">No invite code yet <button class="btn btn-outline btn-sm" style="padding:2px 8px" onclick="regenInviteCode(${ja(i.fid)})">Create code</button></div>`):'';
-      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)"><div><div style="font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace">${h(i.fid)}</div><div style="font-size:11px;color:var(--ink3)">${h(i.name||'—')} · ${i.used?`✅ ${h(i.assignedTo)}`:'⏳ Not registered'}</div>${code}</div>${!i.used?`<button class="btn btn-red btn-sm" onclick="removeEmpId(${ja(i.fid)})">Remove</button>`:''}</div>`;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)"><div><div style="font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace">${h(i.fid)}</div><div style="font-size:11px;color:var(--ink3)">${h(i.name||'—')} · ${isOrphan(i)?`<span style="color:var(--red);font-weight:700">⚠️ Used by a deleted account</span>`:i.used?`✅ ${h(i.assignedTo)}`:'⏳ Not registered'}</div>${code}</div>${isOrphan(i)?`<button class="btn btn-outline btn-sm" onclick="releaseOrphanId(${ja(i.fid)})">Release ID</button>`:''}${!i.used?`<button class="btn btn-red btn-sm" onclick="removeEmpId(${ja(i.fid)})">Remove</button>`:''}</div>`;
     }).join(''):'<div style="color:var(--ink3);text-align:center;padding:12px;font-size:13px">No IDs yet.</div>';
   }catch(e){}
+}
+
+// Frees an orphaned ID with a new invite code.
+async function releaseOrphanId(id){
+  if(!confirm(`Release ID ${id}? It gets a new invite code and can be given to someone again.`+LOGIN_NOTE(id)))return;
+  try{
+    await fbUpdate(`employeeIds/${id}`,{used:false,assignedTo:'',assignedUid:'',inviteCode:genCode(8)});
+    await writeAuditLog({type:'employee_id_released',empId:id,reason:'orphaned'});
+    toast(`ID ${id} released`);buildEmpIds();
+  }catch(e){toast('Error',true);}
 }
 
 async function addEmpId(){
