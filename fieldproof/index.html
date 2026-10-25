@@ -119,6 +119,8 @@ dl.sum dt{color:var(--sub);font-weight:500}dl.sum dd{margin:0}
 .lform .two .btn{width:100%}
 .lform .btn.line{color:#F3F0E8;border-color:rgba(243,240,232,.3)}
 .gate h2{color:#F3F0E8}
+.prep{display:flex;flex-direction:column;gap:1px;border-left:4px solid var(--vis);background:var(--card);padding:10px 12px;margin-top:6px}
+.prep b{font-size:17px}
 .embed .foot{display:none}
 .embed .top{position:sticky;top:0}
 a{color:var(--blue)}
@@ -250,7 +252,7 @@ function arm(b,fn){if(b.dataset.armed==='1'){fn();return}b.dataset.armed='1';con
 // fpSites/{id}           site visit (type 'visit', author + managers only) or job (type 'job', managers create)
 // fpSites/{id}/proofs     one signed verification per building version (locked once signed)
 // fpSites/{id}/photos     compressed site photos (immutable)
-const APP={name:'29Cyber FieldProof',version:'2.0.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber FieldProof',version:'2.1.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={crewDomain:'crew.dgk.internal'};
 const L={en:Object.assign({newJob:"New job",editJob:"Job details",jobs:"Jobs",noJobs:"No jobs yet. Create the first one when you reach the site.",duplicate:"Duplicate layout",del:"Delete",confirm:"Confirm",address:"Address",condo:"Community",wo:"Work order",bldg:"Building #",model:"Building model",supervisor:"Supervisor",installer:"Installer (you)",notes:"Job notes",gpsBtn:"Capture GPS",gpsNone:"GPS not captured (optional)",gpsWait:"Getting position…",gpsFail:"GPS isn't available here. The address fields are enough.",dictHint:"Tip: use the keyboard mic to dictate.",saveForm:"Save and build",back:"Back",details:"Details",addPhoto:"Photo",photo:"Photo",photoName:"Photo name",delPhoto:"Delete photo",zoom:"Zoom",emptyPhoto:"Take or choose the first photo of the site.",bom:"Materials",bomEmpty:"No pieces placed.",review:"Review and sign",viewDoc:"View document",locked:"Job signed. The layout is locked.",flip:"Flip",size:"Size",arrow:"Arrow",qty:"Qty",otherName:"Material name",noteP:"Piece note",remove:"Remove piece",close:"Close",summary:"Summary",pieceNotes:"Piece notes",none:"None",supSig:"Supervisor signature",instSig:"Your signature",name:"Name",clear:"Clear",finalize:"Sign and finalize",stmt:"The supervisor confirms the downspout locations, elbows, drains, splash blocks and materials in this document are what was requested for this building.",needWo:"Fill in work order and building number.",needAddr:"Fill in the address or the community.",needSig:"Both names and both signatures are required.",needPieces:"Place at least one piece before signing.",signedAt:"Signed",integrity:"Integrity code (SHA-256)",pdf:"Download PDF",email:"Open email",pdfMaking:"Building PDF…",pdfOk:"PDF saved. Attach it to the email.",pdfNo:"Downloads aren't available in this view.",pdfErr:"The PDF couldn't be built.",bossEmail:"Boss email (for sending)",storeWarn:"This browser didn't allow saving on the device. Jobs are lost when the page closes.",draft:"Draft",signed:"Signed",other:"Other material",drain:"Drain",yourName:"Your name",enter:"Sign in",contAs:"Continue as",switchU:"Switch user",testMode:"Test mode: sign in without a password.",tagline:"Installation locations, verified and signed on site.",logout:"Sign out",needName:"Enter your name to sign in.",curColor:"Current color (next pieces)",colorPh:"e.g. white, brown",color:"Color",kickerEl:"Kicker elbows",note:"Free text",noteText:"Text",photoNotes:"Text on photos",textPh:"Write here"},{
   tagline:"Installation locations, verified and signed on site.",
@@ -275,7 +277,7 @@ const EMBED=new URLSearchParams(location.search).has('embed');
 if(EMBED)document.documentElement.classList.add('embed');
 const isMgr=()=>!!session&&(session.role==='manager'||session.role==='bigboss');
 const now=()=>fb().serverTimestamp();
-let session=null,CUSTOMER=null,loginType='crew',homeTab='jobs';
+let session=null,CUSTOMER=null,RAWCO=null,loginType='crew',homeTab='jobs';
 let site=null,linkedVisit=null,proofs=[],cur=null,vi=0,selId=null,zoom=1,drag=null,pan=null,pads={};
 const photos=new Map();
 const photoKey=v=>v&&v.ph?`${v.ph.s}/${v.ph.id}`:'';
@@ -284,6 +286,14 @@ async function loadPhotos(p){for(const v of p.views||[]){const k=photoKey(v);if(
 const KIND={field:'Field notes',lead:'Sales lead'};
 const STATUS={open:'Open',converted:'Job created',closed:'Closed',draft:'Draft',signed:'Signed'};
 function cleanCompany(d){if(!d||typeof d!=='object')return null;const s=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';const name=s(d.name);if(!name)return null;return{name,printName:s(d.printName)||name,phone:s(d.phone,40),email:s(d.email,80),address:s(d.address,160)};}
+// Issuer = config/company exactly as stored (the rules compare it at signing).
+const issuerSnap=()=>RAWCO?{name:String(RAWCO.name??''),printName:String(RAWCO.printName??''),phone:String(RAWCO.phone??''),email:String(RAWCO.email??''),address:String(RAWCO.address??'')}:null;
+const issuerOf=j=>j&&j.status==='signed'&&'issuer' in j?(j.issuer?cleanCompany(j.issuer):null):CUSTOMER;
+// Client company ("Prepared for"): remembered on this device for quick reuse.
+const CF=[['name','Company name'],['contact','Contact person'],['phone','Phone'],['email','Email'],['address','Address']];
+function savedClients(){try{return JSON.parse(ls('clients')||'[]')}catch(e){return[]}}
+function rememberClient(c){if(!c)return;const a=savedClients().filter(x=>x.name.toLowerCase()!==c.name.toLowerCase());a.unshift(c);ls('clients',JSON.stringify(a.slice(0,30)))}
+const clientLines=c=>c?[c.contact,c.phone,c.email,c.address].filter(Boolean):[];
 const foot=()=>`<footer class="foot"><img src="${LOGO_SRC}" alt=""><span><b>${esc(APP.name)}</b> v${esc(APP.version)}<br>Created by ${esc(APP.author)} · © 2026 ${esc(APP.vendor)}</span></footer>`;
 
 // ─── Sign in (same accounts as CrewTrack) ───
@@ -319,7 +329,7 @@ async function onUser(user){
   if(p.mustChangePassword===true){notice('🔑','Set your password first','Your account has a temporary password. Open CrewTrack once to create your own password.',`<a class="btn vis big" href="../index.html">Open CrewTrack</a>`);return}
   if(!hasApp(p,'fieldproof')){notice('🔒','No access to FieldProof',`Hi ${esc(p.name)}. Your account does not have access to FieldProof yet. Ask your manager to turn it on.`,hasApp(p,'crewtrack')?`<a class="btn vis big" href="../index.html">Open CrewTrack</a>`:'');return}
   session={uid:user.uid,...p};
-  try{CUSTOMER=cleanCompany(await fbGet('config/company'));}catch(e){CUSTOMER=null}
+  try{RAWCO=await fbGet('config/company');CUSTOMER=cleanCompany(RAWCO);}catch(e){RAWCO=null;CUSTOMER=null}
   home();
 }
 
@@ -343,7 +353,7 @@ async function home(tab){
   const list=homeTab==='jobs'?jobs:homeTab==='visits'?mine:visits;
   const row=s=>`<article class="job"><div class="jmain" data-act="openSite" data-id="${esc(s.fid)}">
      <div class="jt">${s.type==='job'?'WO '+esc(s.wo)+' · ':''}${esc(s.condo||s.address||'(no address)')}</div>
-     <div class="js">${s.type==='visit'?esc(KIND[s.kind]||'Site visit')+' · ':''}${esc(s.address&&s.condo?s.address:'')}${homeTab==='all'?' · '+esc(s.ownerName||''):''} · ${fmt(s.createdAt)}</div></div>
+     <div class="js">${s.client?'For '+esc(s.client.name)+' · ':''}${s.type==='visit'?esc(KIND[s.kind]||'Site visit')+' · ':''}${esc(s.address&&s.condo?s.address:'')}${homeTab==='all'?' · '+esc(s.ownerName||''):''} · ${fmt(s.createdAt)}</div></div>
      <span class="pill ${esc(s.status)}">${esc(STATUS[s.status]||s.status)}</span></article>`;
   $('.wrap').innerHTML=`<div class="acts" style="margin-top:0">${isMgr()?`<button class="btn vis" data-act="newSite" data-t="job">+ New job</button>`:''}<button class="btn ${isMgr()?'':'vis'}" data-act="newSite" data-t="visit">+ New site visit</button></div>
    <div class="tabs" style="margin-top:16px">${tabs.map(([k,n,c])=>`<button class="tab ${k===homeTab?'on':''}" data-act="tab" data-t="${k}">${n} (${c})</button>`).join('')}</div>
@@ -359,6 +369,12 @@ function siteForm(type,s){
   app.innerHTML=topbar(s?'backSite':'home',s?(isJob?'Job details':'Site visit details'):(isJob?'New job':'New site visit'),'')+`<section class="wrap">
    ${isJob?`<label class="f" for="f_wo">Work order *</label><input id="f_wo" value="${esc(siteDraft.wo)}" maxlength="40" autocomplete="off">`
     :`<label class="f">Type</label><div class="two"><button class="btn ${siteDraft.kind==='field'?'vis':''}" data-act="kind" data-k="field">Field notes</button><button class="btn ${siteDraft.kind==='lead'?'vis':''}" data-act="kind" data-k="lead">Sales lead</button></div>`}
+   <h3>Client company <span class="hint">(optional, shown as "Prepared for" on the PDF)</span></h3>
+   <label class="f" for="c_name" style="margin-top:4px">Company name</label><input id="c_name" list="clientlist" value="${esc(siteDraft.client?.name||'')}" maxlength="120" autocomplete="off">
+   <datalist id="clientlist">${savedClients().map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>
+   <div class="two">${CF.slice(1,3).map(([k,l])=>`<div><label class="f" for="c_${k}">${l}</label><input id="c_${k}" value="${esc(siteDraft.client?.[k]||'')}" maxlength="${k==='phone'?40:120}" autocomplete="off"></div>`).join('')}</div>
+   ${CF.slice(3).map(([k,l])=>`<label class="f" for="c_${k}">${l}</label><input id="c_${k}" value="${esc(siteDraft.client?.[k]||'')}" maxlength="${k==='address'?200:120}" autocomplete="off" ${k==='email'?'type="email" inputmode="email"':''}>`).join('')}
+   <h3>Site</h3>
    <label class="f" for="f_condo">${t('condo')}</label><input id="f_condo" value="${esc(siteDraft.condo)}" maxlength="120" autocomplete="off">
    <label class="f" for="f_address">${t('address')}</label><input id="f_address" value="${esc(siteDraft.address)}" maxlength="200" autocomplete="off">
    <label class="f" for="f_notes">Notes</label><textarea id="f_notes" rows="4" maxlength="4000">${esc(siteDraft.notes)}</textarea><p class="hint">${t('dictHint')}</p>
@@ -370,15 +386,20 @@ async function saveSite(){
   const d=siteDraft;d.condo=g('condo').slice(0,120);d.address=g('address').slice(0,200);d.notes=g('notes').slice(0,4000);
   if(d.type==='job'){d.wo=g('wo').slice(0,40);if(!d.wo){err.textContent='Fill in the work order.';return}}
   if(!d.condo&&!d.address){err.textContent=t('needAddr');return}
+  const cv=k=>($('#c_'+k)?.value||'').trim();
+  const anyC=CF.some(([k])=>cv(k));
+  if(anyC&&!cv('name')){err.textContent='Fill in the client company name, or clear the client fields.';return}
+  d.client=anyC?{name:cv('name').slice(0,120),contact:cv('contact').slice(0,120),phone:cv('phone').slice(0,40),email:cv('email').slice(0,120),address:cv('address').slice(0,200)}:null;
+  rememberClient(d.client);
   try{
     if(d.fid){
-      const up={condo:d.condo,address:d.address,notes:d.notes,updatedAt:now()};
+      const up={condo:d.condo,address:d.address,notes:d.notes,client:d.client,updatedAt:now()};
       if(d.type==='job')up.wo=d.wo;else up.kind=d.kind;
       await fbUpdate(`fpSites/${d.fid}`,up);openSite(d.fid);
     }else{
       const id=newId();
       await fbSet(`fpSites/${id}`,{type:d.type,kind:d.type==='visit'?d.kind:'',wo:d.type==='job'?d.wo:'',condo:d.condo,address:d.address,notes:d.notes,
-        status:'open',ownerUid:session.uid,ownerName:session.name,fromVisit:'',jobId:'',createdAt:now(),updatedAt:now()});
+        status:'open',ownerUid:session.uid,ownerName:session.name,fromVisit:'',jobId:'',client:d.client,createdAt:now(),updatedAt:now()});
       openSite(id);
     }
   }catch(e){console.log(e);err.textContent=e.code==='permission-denied'?'Not allowed with your access.':'Could not save. Check your connection.';}
@@ -416,6 +437,7 @@ function renderSite(){
       ${canAdd(s)&&signed?`<button class="btn sm" data-act="newVersion" data-id="${esc(signed.id)}" data-s="${esc(signed._site)}">New version</button>`:''}</div>`;}).join('');
   app.innerHTML=topbar('home',title,esc(s.condo||s.address||''))+`<section class="wrap">
    <dl class="sum">${isJob?`<dt>${t('wo')}</dt><dd>${esc(s.wo)}</dd>`:`<dt>Type</dt><dd>${esc(KIND[s.kind]||'')}</dd>`}<dt>${t('condo')}</dt><dd>${esc(s.condo)||'-'}</dd><dt>${t('address')}</dt><dd>${esc(s.address)||'-'}</dd>
+   <dt>Client</dt><dd>${s.client?esc(s.client.name)+(clientLines(s.client).length?`<br><span class="js">${clientLines(s.client).map(esc).join(' · ')}</span>`:''):'-'}</dd>
    <dt>Status</dt><dd>${esc(STATUS[s.status]||s.status)}</dd><dt>Created</dt><dd>${fmt(s.createdAt)} by ${esc(s.ownerName)}</dd>
    ${linkedVisit?`<dt>Site visit</dt><dd><a href="#" data-act="openSite" data-id="${esc(linkedVisit.fid)}">${esc(KIND[linkedVisit.kind]||'Site visit')} by ${esc(linkedVisit.ownerName)}</a></dd>`:''}
    ${s.type==='visit'&&s.jobId?`<dt>Job</dt><dd><a href="#" data-act="openSite" data-id="${esc(s.jobId)}">Open the job</a></dd>`:''}</dl>
@@ -433,7 +455,7 @@ async function doConvert(){
   const v=site,id=newId();
   try{
     const{db,doc,writeBatch}=fb();const b=writeBatch(db);
-    b.set(doc(db,'fpSites',id),{type:'job',kind:'',wo,condo:v.condo||'',address:v.address||'',notes:v.notes||'',status:'open',ownerUid:session.uid,ownerName:session.name,fromVisit:v.fid,jobId:'',createdAt:now(),updatedAt:now()});
+    b.set(doc(db,'fpSites',id),{type:'job',kind:'',wo,condo:v.condo||'',address:v.address||'',notes:v.notes||'',client:v.client||null,status:'open',ownerUid:session.uid,ownerName:session.name,fromVisit:v.fid,jobId:'',createdAt:now(),updatedAt:now()});
     b.update(doc(db,'fpSites',v.fid),{status:'converted',jobId:id,updatedAt:now()});
     await b.commit();openSite(id);
   }catch(e){console.log(e);$('#cverr').textContent='Could not create the job.';}
@@ -524,7 +546,7 @@ async function addPhoto(file){if(!file||locked())return;const msg=$('#phmsg');
 function review(){const j=cur,site=sd(j),sg=j.status==='signed',lk=locked(),nums=numbering(j),pn=[];j.views.forEach(v=>v.items.forEach(it=>{if(it.note&&it.note.trim())pn.push(`<li><b>${nums[it.id]}. ${esc(pname(it))}${it.color?' ('+esc(it.color)+')':''}</b> (${esc(v.name)}): ${esc(it.note)}</li>`)}));
  const row=(k,v)=>`<dt>${k}</dt><dd>${esc(v)||'-'}</dd>`;
  app.innerHTML=topbar('toEditor',sg?t('viewDoc'):lk?'Draft':t('review'),`Bldg ${esc(j.bldg)} · v${j.version}`)+`
- <section class="wrap"><h2>${t('summary')}</h2><dl class="sum">${row(t('address'),site.address)}${row(t('condo'),site.condo)}${row(t('wo'),site.type==='job'?site.wo:'Site visit ('+(KIND[site.kind]||'')+')')}${row(t('bldg'),j.bldg)}${row(t('model'),j.model)}${row('Version','v'+j.version)}<dt>GPS</dt><dd>${gpsTxt(j.gps)}</dd></dl>
+ <section class="wrap">${site.client?`<div class="prep"><span class="hint">Prepared for</span><b>${esc(site.client.name)}</b>${clientLines(site.client).map(x=>`<span>${esc(x)}</span>`).join('')}</div>`:''}<h2>${t('summary')}</h2><dl class="sum">${row(t('address'),site.address)}${row(t('condo'),site.condo)}${row(t('wo'),site.type==='job'?site.wo:'Site visit ('+(KIND[site.kind]||'')+')')}${row(t('bldg'),j.bldg)}${row(t('model'),j.model)}${row('Version','v'+j.version)}<dt>GPS</dt><dd>${gpsTxt(j.gps)}</dd></dl>
  <h3>${t('bom')}</h3>${bomHTML(j)}
  <h3>${t('notes')}</h3><p style="white-space:pre-wrap;margin:0">${esc(j.notes)||t('none')}</p>
  ${(()=>{const tl=[];j.views.forEach(v=>v.items.forEach(it=>{if(it.k==='tx'&&(it.text||'').trim())tl.push(`<li>(${esc(v.name)}) ${esc(it.text)}</li>`)}));return tl.length?`<h3>${t('photoNotes')}</h3><ul style="white-space:pre-wrap">${tl.join('')}</ul>`:''})()}<h3>${t('pieceNotes')}</h3>${pn.length?`<ul>${pn.join('')}</ul>`:`<p class="hint">${t('none')}</p>`}
@@ -560,37 +582,39 @@ async function sharePdf(){const m=$('#pmsg'),j=cur,site=sd(j);
   try{await navigator.share({files:[file],title:subj,text:`${subj}\nSigned by ${j.sig?.supName||'-'} (site supervisor) and ${j.sig?.instName||'-'}. Integrity (SHA-256): ${j.hash}`});m.textContent='';}
   catch(e){if(e&&e.name==='AbortError'){m.textContent=''}else{console.log(e);m.textContent='Sharing is not available here. Use Download PDF.'}}}
 // The hash covers everything shown in the document; photos are immutable in the database.
-const canon=j=>JSON.stringify({siteId:j.siteId,wo:j.wo||'',condo:j.condo||'',address:j.address||'',bldg:j.bldg,model:j.model||'',notes:j.notes||'',gps:j.gps||null,version:j.version,prevId:j.prevId||'',views:j.views,sig:j.sig&&{supName:j.sig.supName,instName:j.sig.instName,sup:j.sig.sup,inst:j.sig.inst}});
+const canon=j=>JSON.stringify({siteId:j.siteId,wo:j.wo||'',condo:j.condo||'',address:j.address||'',client:j.client||null,issuer:j.issuer||null,bldg:j.bldg,model:j.model||'',notes:j.notes||'',gps:j.gps||null,version:j.version,prevId:j.prevId||'',views:j.views,sig:j.sig&&{supName:j.sig.supName,instName:j.sig.instName,sup:j.sig.sup,inst:j.sig.inst}});
 async function finalize(){const sn=$('#supName').value.trim().slice(0,80),err=$('#serr');
  if(!cur.views.some(v=>v.items.length)){err.textContent=t('needPieces');return}
  if(!sn||!pads.S.has()||!pads.I.has()){err.textContent=t('needSig');return}
  const b=$('#finBtn');b.disabled=true;b.textContent='Signing…';
  const sig={supName:sn,instName:session.name,sup:pads.S.data(),inst:pads.I.data(),device:(navigator.userAgent||'').slice(0,160)+` | ${screen.width}x${screen.height}`};
- const j={...cur,sig,wo:site.wo||'',condo:site.condo||'',address:site.address||''};const hash=await sha(canon(j));
+ const j={...cur,sig,wo:site.wo||'',condo:site.condo||'',address:site.address||'',client:site.client||null,issuer:issuerSnap()};const hash=await sha(canon(j));
  try{
   await flushSave();
-  await fbUpdate(`fpSites/${cur.siteId}/proofs/${cur.id}`,{status:'signed',sig,hash,signedAt:now(),views:cur.views,notes:cur.notes||'',updatedAt:now(),wo:j.wo,condo:j.condo,address:j.address});
-  Object.assign(cur,{status:'signed',sig,hash,signedAt:new Date(),wo:j.wo,condo:j.condo,address:j.address});
+  await fbUpdate(`fpSites/${cur.siteId}/proofs/${cur.id}`,{status:'signed',sig,hash,signedAt:now(),views:cur.views,notes:cur.notes||'',updatedAt:now(),wo:j.wo,condo:j.condo,address:j.address,client:j.client,issuer:j.issuer});
+  Object.assign(cur,{status:'signed',sig,hash,signedAt:new Date(),wo:j.wo,condo:j.condo,address:j.address,client:j.client,issuer:j.issuer});
   const fresh=await fbGet(`fpSites/${cur.siteId}/proofs/${cur.id}`).catch(()=>null);if(fresh)Object.assign(cur,fresh);
   review();
  }catch(e){console.log(e);b.disabled=false;b.textContent=t('finalize');err.textContent='Could not sign. Check your connection and try again.';}}
 function mailto(j){const site=sd(j);const b=bomRows(j,'en').map(x=>`- ${x.n}: ${x.q}`).join('\n');
  const s=`Gutter scope - ${site.type==='job'?'WO '+site.wo+' - ':''}Bldg ${j.bldg} - ${site.condo||site.address}`;
- const body=`Signed gutter scope attached (PDF).\n\nAddress: ${site.address||'-'}\nCommunity: ${site.condo||'-'}\nWork order: ${site.type==='job'?site.wo:'Site visit'}\nBuilding: ${j.bldg} (v${j.version})\nSite supervisor: ${j.sig?j.sig.supName:'-'}\nVerified by: ${j.sig?j.sig.instName:'-'}\nSigned: ${j.signedAt?fmtEn(j.signedAt):'-'}\n\nMaterials:\n${b}\n\nIntegrity (SHA-256): ${j.hash||'-'}\n\n${APP.name} · ${APP.vendor}`;
+ const body=`Signed gutter scope attached (PDF).\n${site.client?'Prepared for: '+site.client.name+'\n':''}\nAddress: ${site.address||'-'}\nCommunity: ${site.condo||'-'}\nWork order: ${site.type==='job'?site.wo:'Site visit'}\nBuilding: ${j.bldg} (v${j.version})\nSite supervisor: ${j.sig?j.sig.supName:'-'}\nVerified by: ${j.sig?j.sig.instName:'-'}\nSigned: ${j.signedAt?fmtEn(j.signedAt):'-'}\n\nMaterials:\n${b}\n\nIntegrity (SHA-256): ${j.hash||'-'}\n\n${APP.name} · ${APP.vendor}`;
  return `mailto:${encodeURIComponent(ls('boss'))}?subject=${encodeURIComponent(s)}&body=${encodeURIComponent(body)}`}
 
 // ─── PDF: customer header, 29 Cyber credit footer ───
 async function viewImage(j,v){const c=document.createElement('canvas');c.width=v.w;c.height=v.h;const x=c.getContext('2d');const src=photoSrc(v);if(src)x.drawImage(await loadImg(src),0,0,v.w,v.h);
  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${v.w}" height="${v.h}" viewBox="0 0 ${v.w} ${v.h}">${itemsSVG(j,v,null,true)}</svg>`;
  x.drawImage(await loadImg('data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg)),0,0);return c.toDataURL('image/jpeg',0.85)}
-const sd=j=>j.status==='signed'&&'condo' in j?{wo:j.wo,condo:j.condo,address:j.address,type:j.wo?'job':site.type,kind:site.kind}:site;
+const sd=j=>j.status==='signed'&&'condo' in j?{wo:j.wo,condo:j.condo,address:j.address,client:'client' in j?j.client:site.client,type:j.wo?'job':site.type,kind:site.kind}:site;
 async function makePDF(j){const site=sd(j);const{jsPDF}=window.jspdf;const d=new jsPDF({unit:'pt',format:'letter'}),W=612,H=792,M=40;let y=54;
  const ensure=h=>{if(y+h>H-64){d.addPage();y=54}};
  const sec=s=>{ensure(40);y+=10;d.setFont('helvetica','bold');d.setFontSize(13);d.text(s,M,y);y+=6;d.setDrawColor(200);d.line(M,y,W-M,y);y+=16};
  const kv=(k,v)=>{const tx=d.splitTextToSize(String(v||'-'),W-2*M-120);ensure(14*tx.length);d.setFont('helvetica','bold');d.setFontSize(10);d.text(k,M,y);d.setFont('helvetica','normal');d.text(tx,M+120,y);y+=14*tx.length};
  const para=s=>{d.setFont('helvetica','normal');d.setFontSize(10);d.splitTextToSize(s,W-2*M).forEach(l=>{ensure(14);d.text(l,M,y);y+=14})};
- if(CUSTOMER){d.setFont('helvetica','bold');d.setFontSize(15);d.text(CUSTOMER.printName,M,y);y+=14;const ct=[CUSTOMER.phone,CUSTOMER.email,CUSTOMER.address].filter(Boolean).join('  ·  ');if(ct){d.setFont('helvetica','normal');d.setFontSize(9);d.setTextColor(90);d.text(ct,M,y);d.setTextColor(0);y+=12}y+=6;d.setDrawColor(14,26,46);d.setLineWidth(2);d.line(M,y,W-M,y);d.setLineWidth(1);y+=24}
+ const ISS=issuerOf(j);
+ if(ISS){d.setFont('helvetica','bold');d.setFontSize(15);d.text(ISS.printName,M,y);y+=14;const ct=[ISS.phone,ISS.email,ISS.address].filter(Boolean).join('  ·  ');if(ct){d.setFont('helvetica','normal');d.setFontSize(9);d.setTextColor(90);d.text(ct,M,y);d.setTextColor(0);y+=12}y+=6;d.setDrawColor(14,26,46);d.setLineWidth(2);d.line(M,y,W-M,y);d.setLineWidth(1);y+=24}
  d.setFont('helvetica','bold');d.setFontSize(20);d.text('Gutter installation scope',M,y);y+=18;d.setFont('helvetica','normal');d.setFontSize(10);d.setTextColor(100);d.text('Field record approved and signed on site',M,y);d.setTextColor(0);y+=16;
+ if(site.client){const cl=clientLines(site.client);const bh=36+cl.length*13;d.setFillColor(243,240,232);d.setDrawColor(201,162,39);d.rect(M,y,W-2*M,bh,'FD');d.setFontSize(9);d.setTextColor(90);d.text('PREPARED FOR',M+10,y+14);d.setTextColor(0);d.setFont('helvetica','bold');d.setFontSize(12);d.text(site.client.name,M+10,y+27);d.setFont('helvetica','normal');d.setFontSize(10);cl.forEach((x,i)=>d.text(x,M+10,y+41+i*13));y+=bh+14}
  sec('Job');kv('Address',site.address);kv('Community',site.condo);kv('Work order',site.type==='job'?site.wo:'Site visit ('+(KIND[site.kind]||'')+')');kv('Building',j.bldg);kv('Building model',j.model);kv('Version','v'+j.version);kv('Site supervisor',j.sig&&j.sig.supName);kv('Verified by',j.sig&&j.sig.instName);kv('Created',fmtEn(j.createdAt));kv('Signed',j.signedAt?fmtEn(j.signedAt):'Not signed');kv('GPS',j.gps?`${j.gps.lat.toFixed(6)}, ${j.gps.lng.toFixed(6)} (+/- ${Math.round(j.gps.acc)} m), captured ${fmtEn(j.gps.ts)}`:'Not captured');
  sec('Materials');bomRows(j,'en').forEach(x=>kv(x.n,String(x.q)));
  sec('Building notes');para(j.notes||'None');
@@ -661,6 +685,7 @@ app.addEventListener('input',e=>{const id=e.target.id,v=e.target.value,it=selId&
  drawLay();const bm=$('#bom');if(bm)bm.innerHTML=bomHTML(cur);save()});
 app.addEventListener('input',e=>{if(e.target.id==='zoom'&&cur&&locked()){zoom=+e.target.value;const sv=$('#sv');if(sv)sv.style.width=zoom*100+'%'}});
 app.addEventListener('change',e=>{if(e.target.classList.contains('ph'))addPhoto(e.target.files[0]);
+ if(e.target.id==='c_name'){const c=savedClients().find(x=>x.name.toLowerCase()===e.target.value.trim().toLowerCase());if(c)CF.slice(1).forEach(([k])=>{const f=$('#c_'+k);if(f&&!f.value)f.value=c[k]||''})}
  if(e.target.id==='curColor'||e.target.id==='s_color')rememberColor(e.target.value);
  if(e.target.id==='s_arrow'&&cur&&!locked()){const it=find(selId);it.arrow=e.target.checked;drawLay();save()}});
 window.addEventListener('beforeunload',()=>{if(saveT&&cur)persist(cur)});
