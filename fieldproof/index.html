@@ -119,6 +119,8 @@ dl.sum dt{color:var(--sub);font-weight:500}dl.sum dd{margin:0}
 .lform .two .btn{width:100%}
 .lform .btn.line{color:#F3F0E8;border-color:rgba(243,240,232,.3)}
 .gate h2{color:#F3F0E8}
+.embed .foot{display:none}
+.embed .top{position:sticky;top:0}
 a{color:var(--blue)}
 </style>
 <script type="module">
@@ -269,6 +271,8 @@ const fmt=ts=>{const d=tsDate(ts);return isNaN(d)?'-':d.toLocaleString('en-US',{
 const fmtEn=fmt;
 const newId=()=>{const c='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';const a=new Uint8Array(20);crypto.getRandomValues(a);return Array.from(a,x=>c[x%62]).join('');};
 const hasApp=(u,a)=>!!u&&(u.role==='bigboss'||(u.apps&&u.apps[a]===true));
+const EMBED=new URLSearchParams(location.search).has('embed');
+if(EMBED)document.documentElement.classList.add('embed');
 const isMgr=()=>!!session&&(session.role==='manager'||session.role==='bigboss');
 const now=()=>fb().serverTimestamp();
 let session=null,CUSTOMER=null,loginType='crew',homeTab='jobs';
@@ -312,8 +316,8 @@ async function onUser(user){
   let p=null;try{p=await fbGet(`users/${user.uid}`);}catch(e){}
   if(!p){notice('⚠️','No profile','This login has no profile. Ask your manager.');return}
   if(p.status==='pending'){notice('⏳','Waiting for approval',`Hi ${esc(p.name)}. Your account is waiting for your manager's approval.`);return}
-  if(p.mustChangePassword===true){notice('🔑','Set your password first','Your account has a temporary password. Open CrewTrack once to create your own password.',`<a class="btn vis big" href="../">Open CrewTrack</a>`);return}
-  if(!hasApp(p,'fieldproof')){notice('🔒','No access to FieldProof',`Hi ${esc(p.name)}. Your account does not have access to FieldProof yet. Ask your manager to turn it on.`,hasApp(p,'crewtrack')?`<a class="btn vis big" href="../">Open CrewTrack</a>`:'');return}
+  if(p.mustChangePassword===true){notice('🔑','Set your password first','Your account has a temporary password. Open CrewTrack once to create your own password.',`<a class="btn vis big" href="../index.html">Open CrewTrack</a>`);return}
+  if(!hasApp(p,'fieldproof')){notice('🔒','No access to FieldProof',`Hi ${esc(p.name)}. Your account does not have access to FieldProof yet. Ask your manager to turn it on.`,hasApp(p,'crewtrack')?`<a class="btn vis big" href="../index.html">Open CrewTrack</a>`:'');return}
   session={uid:user.uid,...p};
   try{CUSTOMER=cleanCompany(await fbGet('config/company'));}catch(e){CUSTOMER=null}
   home();
@@ -324,7 +328,7 @@ function topbar(back,title,sub,right=''){
   return `<header class="top">${back?`<button class="btn sm" data-act="${back}">${t('back')}</button>`:`<img class="hlogo" src="${LOGO_SRC}" alt="">`}<div class="hd"><h1>${title}</h1>${sub?`<div class="sub">${sub}</div>`:''}</div>${right}</header>`;}
 async function home(tab){
   if(tab)homeTab=tab;cur=null;site=null;selId=null;
-  const right=`<div class="tright">${hasApp(session,'crewtrack')?`<a class="btn sm" href="../">CrewTrack</a>`:''}<button class="btn sm" data-act="logout">Sign out</button></div>`;
+  const right=EMBED?'':`<div class="tright">${hasApp(session,'crewtrack')?`<a class="btn sm" href="../index.html">CrewTrack</a>`:''}<button class="btn sm" data-act="logout">Sign out</button></div>`;
   app.innerHTML=topbar('',`<span style="color:var(--gold)">29Cyber</span> FieldProof`,esc(session.name)+(CUSTOMER?' · '+esc(CUSTOMER.name):''),right)+`<section class="wrap"><div class="spin">Loading…</div></section>`;
   let jobs=[],visits=[];
   try{
@@ -449,19 +453,21 @@ function proofForm(p){
    <p id="ferr" class="err" role="alert"></p><button class="btn vis big" data-act="saveProof">${p?'Save':t('saveForm')}</button></section>`;}
 const gpsTxt=g=>g?`${g.lat.toFixed(6)}, ${g.lng.toFixed(6)} (±${Math.round(g.acc)} m)`:t('gpsNone');
 const proofData=p=>({siteId:p.siteId,bldg:p.bldg,model:p.model||'',notes:p.notes||'',gps:p.gps||null,views:p.views||[],curColor:p.curColor||'',
-  version:p.version,prevId:p.prevId||'',status:p.status,authorUid:p.authorUid,authorName:p.authorName,createdAt:p.createdAt,updatedAt:now(),sig:p.sig||null,signedAt:p.signedAt||null,hash:p.hash||''});
+  version:p.version,prevId:p.prevId||'',prevSite:p.prevSite||'',status:p.status,authorUid:p.authorUid,authorName:p.authorName,createdAt:p.createdAt,updatedAt:now(),sig:p.sig||null,signedAt:p.signedAt||null,hash:p.hash||''});
 async function saveProof(){
   const g=k=>($('#f_'+k)?.value||'').trim(),err=$('#ferr');
   const d=proofDraft;d.bldg=g('bldg').slice(0,20);d.model=g('model').slice(0,60);d.notes=g('notes').slice(0,4000);
   if(!d.bldg){err.textContent=t('needWo');return}
   try{
     if(d.id){await fbUpdate(`fpSites/${d.siteId}/proofs/${d.id}`,{model:d.model,notes:d.notes,gps:d.gps||null,updatedAt:now()});Object.assign(cur,{model:d.model,notes:d.notes,gps:d.gps});editor();}
-    else{await createProof({bldg:d.bldg,model:d.model,notes:d.notes,gps:d.gps||null,views:[],version:nextVersion(d.bldg),prevId:''});}
+    else{
+      if(proofs.some(p=>p.bldg.toLowerCase()===d.bldg.toLowerCase())){err.textContent=`Building ${d.bldg} already exists here. Open it and use "New version".`;return}
+      await createProof({bldg:d.bldg,model:d.model,notes:d.notes,gps:d.gps||null,views:[],version:1,prevId:'',prevSite:''});}
   }catch(e){console.log(e);err.textContent='Could not save. Check your connection.';}
 }
 async function createProof(o){
   const id=newId();
-  const p={siteId:site.fid,bldg:o.bldg,model:o.model||'',notes:o.notes||'',gps:o.gps||null,views:o.views||[],curColor:o.curColor||'',version:o.version,prevId:o.prevId||'',
+  const p={siteId:site.fid,bldg:o.bldg,model:o.model||'',notes:o.notes||'',gps:o.gps||null,views:o.views||[],curColor:o.curColor||'',version:o.version,prevId:o.prevId||'',prevSite:o.prevSite||'',
     status:'draft',authorUid:session.uid,authorName:session.name,createdAt:now(),updatedAt:now(),sig:null,signedAt:null,hash:''};
   await fbSet(`fpSites/${site.fid}/proofs/${id}`,p);
   cur={...p,id,_site:site.fid,createdAt:new Date()};proofs.push(cur);vi=0;selId=null;zoom=1;editor();
@@ -470,7 +476,7 @@ async function createProof(o){
 async function newVersion(fromId){
   const f=proofs.find(p=>p.id===fromId);if(!f)return;
   const views=JSON.parse(JSON.stringify(f.views||[]));views.forEach(v=>{v.id=uid();v.items.forEach(it=>{it.id=uid()})});
-  try{await createProof({bldg:f.bldg,model:f.model,notes:f.notes,gps:null,views,curColor:f.curColor,version:nextVersion(f.bldg),prevId:f.id});}
+  try{await createProof({bldg:f.bldg,model:f.model,notes:f.notes,gps:null,views,curColor:f.curColor,version:(f.version||1)+1,prevId:f.id,prevSite:f._site});}
   catch(e){console.log(e);alertMsg('Could not create the new version.');}
 }
 let saveT=null;
@@ -502,7 +508,8 @@ async function editor(){
  <button class="btn vis big" data-act="review">${j.status==='signed'?t('viewDoc'):lk?'View':t('review')}</button></aside></div>`;
  bindStage();draw();}
 // Photos are compressed in the browser (max 1280 px) to stay small in the database.
-async function addPhoto(file){if(!file||locked())return;const msg=$('#phmsg');if(msg)msg.textContent='Saving photo…';const url=URL.createObjectURL(file);
+async function addPhoto(file){if(!file||locked())return;const msg=$('#phmsg');
+ if(cur.views.length>=12){if(msg)msg.textContent='Up to 12 photos per building version.';return}if(msg)msg.textContent='Saving photo…';const url=URL.createObjectURL(file);
  try{const im=await loadImg(url);let m=1280,q=0.72,data,w,h;
   for(let i=0;i<6;i++){const r=Math.min(1,m/Math.max(im.naturalWidth,im.naturalHeight));w=Math.round(im.naturalWidth*r);h=Math.round(im.naturalHeight*r);const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(im,0,0,w,h);data=c.toDataURL('image/jpeg',q);if(data.length<850000)break;m=Math.round(m*0.8);q=Math.max(0.5,q-0.06);}
   const id=newId();
@@ -514,7 +521,7 @@ async function addPhoto(file){if(!file||locked())return;const msg=$('#phmsg');if
  finally{URL.revokeObjectURL(url)}}
 
 // ─── Review, signatures, lock ───
-function review(){const j=cur,sg=j.status==='signed',lk=locked(),nums=numbering(j),pn=[];j.views.forEach(v=>v.items.forEach(it=>{if(it.note&&it.note.trim())pn.push(`<li><b>${nums[it.id]}. ${esc(pname(it))}${it.color?' ('+esc(it.color)+')':''}</b> (${esc(v.name)}): ${esc(it.note)}</li>`)}));
+function review(){const j=cur,site=sd(j),sg=j.status==='signed',lk=locked(),nums=numbering(j),pn=[];j.views.forEach(v=>v.items.forEach(it=>{if(it.note&&it.note.trim())pn.push(`<li><b>${nums[it.id]}. ${esc(pname(it))}${it.color?' ('+esc(it.color)+')':''}</b> (${esc(v.name)}): ${esc(it.note)}</li>`)}));
  const row=(k,v)=>`<dt>${k}</dt><dd>${esc(v)||'-'}</dd>`;
  app.innerHTML=topbar('toEditor',sg?t('viewDoc'):lk?'Draft':t('review'),`Bldg ${esc(j.bldg)} · v${j.version}`)+`
  <section class="wrap"><h2>${t('summary')}</h2><dl class="sum">${row(t('address'),site.address)}${row(t('condo'),site.condo)}${row(t('wo'),site.type==='job'?site.wo:'Site visit ('+(KIND[site.kind]||'')+')')}${row(t('bldg'),j.bldg)}${row(t('model'),j.model)}${row('Version','v'+j.version)}<dt>GPS</dt><dd>${gpsTxt(j.gps)}</dd></dl>
@@ -533,21 +540,21 @@ function review(){const j=cur,sg=j.status==='signed',lk=locked(),nums=numbering(
  </section>`;
  if(!sg&&!lk){pads.S=pad($('#padS'));pads.I=pad($('#padI'))}}
 // The hash covers everything shown in the document; photos are immutable in the database.
-const canon=j=>JSON.stringify({siteId:j.siteId,wo:site.type==='job'?site.wo:'',bldg:j.bldg,model:j.model||'',notes:j.notes||'',gps:j.gps||null,version:j.version,prevId:j.prevId||'',views:j.views,sig:j.sig&&{supName:j.sig.supName,instName:j.sig.instName,sup:j.sig.sup,inst:j.sig.inst}});
+const canon=j=>JSON.stringify({siteId:j.siteId,wo:j.wo||'',condo:j.condo||'',address:j.address||'',bldg:j.bldg,model:j.model||'',notes:j.notes||'',gps:j.gps||null,version:j.version,prevId:j.prevId||'',views:j.views,sig:j.sig&&{supName:j.sig.supName,instName:j.sig.instName,sup:j.sig.sup,inst:j.sig.inst}});
 async function finalize(){const sn=$('#supName').value.trim().slice(0,80),err=$('#serr');
  if(!cur.views.some(v=>v.items.length)){err.textContent=t('needPieces');return}
  if(!sn||!pads.S.has()||!pads.I.has()){err.textContent=t('needSig');return}
  const b=$('#finBtn');b.disabled=true;b.textContent='Signing…';
  const sig={supName:sn,instName:session.name,sup:pads.S.data(),inst:pads.I.data(),device:(navigator.userAgent||'').slice(0,160)+` | ${screen.width}x${screen.height}`};
- const j={...cur,sig};const hash=await sha(canon(j));
+ const j={...cur,sig,wo:site.wo||'',condo:site.condo||'',address:site.address||''};const hash=await sha(canon(j));
  try{
   await flushSave();
-  await fbUpdate(`fpSites/${cur.siteId}/proofs/${cur.id}`,{status:'signed',sig,hash,signedAt:now(),views:cur.views,notes:cur.notes||'',updatedAt:now()});
-  Object.assign(cur,{status:'signed',sig,hash,signedAt:new Date()});
+  await fbUpdate(`fpSites/${cur.siteId}/proofs/${cur.id}`,{status:'signed',sig,hash,signedAt:now(),views:cur.views,notes:cur.notes||'',updatedAt:now(),wo:j.wo,condo:j.condo,address:j.address});
+  Object.assign(cur,{status:'signed',sig,hash,signedAt:new Date(),wo:j.wo,condo:j.condo,address:j.address});
   const fresh=await fbGet(`fpSites/${cur.siteId}/proofs/${cur.id}`).catch(()=>null);if(fresh)Object.assign(cur,fresh);
   review();
  }catch(e){console.log(e);b.disabled=false;b.textContent=t('finalize');err.textContent='Could not sign. Check your connection and try again.';}}
-function mailto(j){const b=bomRows(j,'en').map(x=>`- ${x.n}: ${x.q}`).join('\n');
+function mailto(j){const site=sd(j);const b=bomRows(j,'en').map(x=>`- ${x.n}: ${x.q}`).join('\n');
  const s=`Gutter scope - ${site.type==='job'?'WO '+site.wo+' - ':''}Bldg ${j.bldg} - ${site.condo||site.address}`;
  const body=`Signed gutter scope attached (PDF).\n\nAddress: ${site.address||'-'}\nCommunity: ${site.condo||'-'}\nWork order: ${site.type==='job'?site.wo:'Site visit'}\nBuilding: ${j.bldg} (v${j.version})\nSite supervisor: ${j.sig?j.sig.supName:'-'}\nVerified by: ${j.sig?j.sig.instName:'-'}\nSigned: ${j.signedAt?fmtEn(j.signedAt):'-'}\n\nMaterials:\n${b}\n\nIntegrity (SHA-256): ${j.hash||'-'}\n\n${APP.name} · ${APP.vendor}`;
  return `mailto:${encodeURIComponent(ls('boss'))}?subject=${encodeURIComponent(s)}&body=${encodeURIComponent(body)}`}
@@ -556,7 +563,8 @@ function mailto(j){const b=bomRows(j,'en').map(x=>`- ${x.n}: ${x.q}`).join('\n')
 async function viewImage(j,v){const c=document.createElement('canvas');c.width=v.w;c.height=v.h;const x=c.getContext('2d');const src=photoSrc(v);if(src)x.drawImage(await loadImg(src),0,0,v.w,v.h);
  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${v.w}" height="${v.h}" viewBox="0 0 ${v.w} ${v.h}">${itemsSVG(j,v,null,true)}</svg>`;
  x.drawImage(await loadImg('data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg)),0,0);return c.toDataURL('image/jpeg',0.85)}
-async function makePDF(j){const{jsPDF}=window.jspdf;const d=new jsPDF({unit:'pt',format:'letter'}),W=612,H=792,M=40;let y=54;
+const sd=j=>j.status==='signed'&&'condo' in j?{wo:j.wo,condo:j.condo,address:j.address,type:j.wo?'job':site.type,kind:site.kind}:site;
+async function makePDF(j){const site=sd(j);const{jsPDF}=window.jspdf;const d=new jsPDF({unit:'pt',format:'letter'}),W=612,H=792,M=40;let y=54;
  const ensure=h=>{if(y+h>H-64){d.addPage();y=54}};
  const sec=s=>{ensure(40);y+=10;d.setFont('helvetica','bold');d.setFontSize(13);d.text(s,M,y);y+=6;d.setDrawColor(200);d.line(M,y,W-M,y);y+=16};
  const kv=(k,v)=>{const tx=d.splitTextToSize(String(v||'-'),W-2*M-120);ensure(14*tx.length);d.setFont('helvetica','bold');d.setFontSize(10);d.text(k,M,y);d.setFont('helvetica','normal');d.text(tx,M+120,y);y+=14*tx.length};

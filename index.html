@@ -298,6 +298,9 @@ body.authed .sidebar{display:flex}
 .nload:hover{border-color:var(--accent)}
 .ptbl.notes td{font-family:inherit!important;font-weight:400!important;font-size:11px!important;text-align:left!important;white-space:normal;vertical-align:top}
 .ptbl.notes th{text-align:left!important}
+#s-fieldproof{padding:0!important;max-width:none!important}
+#fp-frame{display:block;width:100%;height:calc(100vh - 64px);height:calc(100dvh - 64px);border:0;background:#F3F0E8}
+body.fp-open .app-foot{display:none}
 .nav-badge{margin-left:auto;min-width:22px;height:22px;border-radius:11px;background:var(--red);color:#2A0603;font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;padding:0 6px}
 .side-user{display:flex;align-items:center;gap:10px;padding:12px 8px;margin-top:10px;border-top:1px solid #22324F;color:#B9C0CC}
 .side-user i{font-size:30px;color:var(--accent)}
@@ -486,7 +489,7 @@ body.authed .sidebar{display:flex}
         <div style="font-size:44px;margin-bottom:10px">🔒</div>
         <div style="font-size:17px;font-weight:800;margin-bottom:6px">No access to CrewTrack</div>
         <div style="font-size:14px;color:var(--ink3);line-height:1.6;margin-bottom:16px">Hi <strong id="noaccess-name"></strong>. Your account does not have access to CrewTrack yet. Ask your manager to turn it on.</div>
-        <a class="btn btn-gold btn-full" id="noaccess-fp" href="fieldproof/" style="display:none;margin-bottom:8px">Open FieldProof →</a>
+        <a class="btn btn-gold btn-full" id="noaccess-fp" href="fieldproof/index.html" style="display:none;margin-bottom:8px">Open FieldProof →</a>
         <button class="btn btn-outline btn-full" onclick="doLogout()">Sign out</button>
       </div>
     </div>
@@ -819,6 +822,9 @@ body.authed .sidebar{display:flex}
   <div id="notes-thread" style="display:none"></div>
 </div>
 
+<!-- ══ FIELD PROOF (the FieldProof app inside CrewTrack, same login) ══ -->
+<div class="screen" id="s-fieldproof"><iframe id="fp-frame" title="Field Proof" allow="camera; geolocation"></iframe></div>
+
 <!-- ══ INVENTORY ══════════════════════════════════════════════════ -->
 <div class="screen" id="s-inventory">
   <div class="page-title">Inventory</div>
@@ -966,7 +972,7 @@ body.authed .sidebar{display:flex}
     <button class="nav-item" id="bn-notes" onclick="showScreen('s-notes')"><i class="ti ti-message-2"></i><span>Notes</span><span class="nav-badge" id="notes-badge" style="display:none"></span></button>
     <button class="nav-item" id="bn-inventory" onclick="showScreen('s-inventory')"><i class="ti ti-building-warehouse"></i><span>Stock</span></button>
     <button class="nav-item" id="bn-admin" style="display:none" onclick="showScreen('s-admin')"><i class="ti ti-settings"></i><span>Admin</span></button>
-    <a class="nav-item" id="fp-link" href="fieldproof/" style="display:none;text-decoration:none"><i class="ti ti-clipboard-check"></i><span>Field Proof</span><i class="ti ti-external-link" style="margin-left:auto;font-size:16px;opacity:.6"></i></a>
+    <button class="nav-item" id="fp-link" style="display:none" onclick="showScreen('s-fieldproof')"><i class="ti ti-clipboard-check"></i><span>Field Proof</span></button>
   </nav>
   <div class="side-user">
     <i class="ti ti-user-circle"></i>
@@ -1265,10 +1271,10 @@ async function fbQuery(col,...constraints){const{db,collection,query,getDocs}=fb
 function showScreen(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   el(id).classList.add('active');
-  ['bn-dash','bn-load','bn-return','bn-history','bn-notes','bn-inventory','bn-admin'].forEach(b=>{const e=el(b);if(e)e.classList.remove('active');});
-  const map={'s-dash':'bn-dash','s-load':'bn-load','s-return':'bn-return','s-history':'bn-history','s-notes':'bn-notes','s-inventory':'bn-inventory','s-admin':'bn-admin'};
+  ['bn-dash','bn-load','bn-return','bn-history','bn-notes','bn-inventory','bn-admin','fp-link'].forEach(b=>{const e=el(b);if(e)e.classList.remove('active');});
+  const map={'s-dash':'bn-dash','s-load':'bn-load','s-return':'bn-return','s-history':'bn-history','s-notes':'bn-notes','s-fieldproof':'fp-link','s-inventory':'bn-inventory','s-admin':'bn-admin'};
   if(map[id]&&el(map[id]))el(map[id]).classList.add('active');
-  const titles={'s-dash':'Dashboard','s-load':'Morning Load','s-return':'End of Day Return','s-history':'History','s-notes':'Notes','s-inventory':'Stock','s-admin':'Admin'};
+  const titles={'s-dash':'Dashboard','s-load':'Morning Load','s-return':'End of Day Return','s-history':'History','s-notes':'Notes','s-fieldproof':'Field Proof','s-inventory':'Stock','s-admin':'Admin'};
   if(el('tb-title'))el('tb-title').textContent=titles[id]||'';
   toggleNav(false);window.scrollTo(0,0);
   if(id==='s-dash') buildDash();
@@ -1276,6 +1282,8 @@ function showScreen(id){
   if(id==='s-load') buildLoadStart();
   if(id==='s-history') buildHistory();
   if(id==='s-notes') buildNotesIndex();
+  if(id==='s-fieldproof'){const f=el('fp-frame');if(f&&!f.getAttribute('src'))f.setAttribute('src','fieldproof/index.html?embed=1');}
+  document.body.classList.toggle('fp-open',id==='s-fieldproof');
   if(id==='s-inventory') buildInventory();
   if(id==='s-admin') buildAdminPanel();
 }
@@ -1562,6 +1570,7 @@ async function _afterLogin(user){
 }
 
 async function doLogout(){
+  {const f=el('fp-frame');if(f)f.removeAttribute('src');document.body.classList.remove('fp-open');}
   stopNotesWatch();session=null;CUSTOMER=null;applyBrand();todayLoad=null;todayJobs=[];crewList=[];pickedCrew=[];PEOPLE=[];myActive=null;selColors=[];extraMats=[];fpItems=[];recipients=[];
   try{await fb().signOut(fb().auth);}catch(e){}
   document.body.classList.remove('authed','nav-open');
@@ -3276,6 +3285,8 @@ async function syncPeople(){
   if(!isMgrRole())return;
   try{
     const[users,people]=await Promise.all([fbQuery('users'),fbQuery('people')]);
+    // Before anyone has app keys (first login after v2.4), do not empty the crew list.
+    if(!users.some(u=>u.role!=='bigboss'&&u.apps&&typeof u.apps.crewtrack==='boolean'))return;
     const want={};users.filter(u=>u.status!=='pending'&&((u.role==='crew'&&hasApp(u,'crewtrack'))||(u.fieldWorker===true&&hasApp(u,'crewtrack')))).forEach(u=>want[u.fid]={name:u.name||'',role:u.role});
     const have={};people.forEach(p=>have[p.fid]=p);
     // Small batches: the rules look up each user's profile (max 20 lookups per batch).
