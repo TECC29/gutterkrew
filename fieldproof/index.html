@@ -250,7 +250,7 @@ function arm(b,fn){if(b.dataset.armed==='1'){fn();return}b.dataset.armed='1';con
 // fpSites/{id}           site visit (type 'visit', author + managers only) or job (type 'job', managers create)
 // fpSites/{id}/proofs     one signed verification per building version (locked once signed)
 // fpSites/{id}/photos     compressed site photos (immutable)
-const APP={name:'29Cyber FieldProof',version:'2.0.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber FieldProof',version:'2.0.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={crewDomain:'crew.dgk.internal'};
 const L={en:Object.assign({newJob:"New job",editJob:"Job details",jobs:"Jobs",noJobs:"No jobs yet. Create the first one when you reach the site.",duplicate:"Duplicate layout",del:"Delete",confirm:"Confirm",address:"Address",condo:"Community",wo:"Work order",bldg:"Building #",model:"Building model",supervisor:"Supervisor",installer:"Installer (you)",notes:"Job notes",gpsBtn:"Capture GPS",gpsNone:"GPS not captured (optional)",gpsWait:"Getting position…",gpsFail:"GPS isn't available here. The address fields are enough.",dictHint:"Tip: use the keyboard mic to dictate.",saveForm:"Save and build",back:"Back",details:"Details",addPhoto:"Photo",photo:"Photo",photoName:"Photo name",delPhoto:"Delete photo",zoom:"Zoom",emptyPhoto:"Take or choose the first photo of the site.",bom:"Materials",bomEmpty:"No pieces placed.",review:"Review and sign",viewDoc:"View document",locked:"Job signed. The layout is locked.",flip:"Flip",size:"Size",arrow:"Arrow",qty:"Qty",otherName:"Material name",noteP:"Piece note",remove:"Remove piece",close:"Close",summary:"Summary",pieceNotes:"Piece notes",none:"None",supSig:"Supervisor signature",instSig:"Your signature",name:"Name",clear:"Clear",finalize:"Sign and finalize",stmt:"The supervisor confirms the downspout locations, elbows, drains, splash blocks and materials in this document are what was requested for this building.",needWo:"Fill in work order and building number.",needAddr:"Fill in the address or the community.",needSig:"Both names and both signatures are required.",needPieces:"Place at least one piece before signing.",signedAt:"Signed",integrity:"Integrity code (SHA-256)",pdf:"Download PDF",email:"Open email",pdfMaking:"Building PDF…",pdfOk:"PDF saved. Attach it to the email.",pdfNo:"Downloads aren't available in this view.",pdfErr:"The PDF couldn't be built.",bossEmail:"Boss email (for sending)",storeWarn:"This browser didn't allow saving on the device. Jobs are lost when the page closes.",draft:"Draft",signed:"Signed",other:"Other material",drain:"Drain",yourName:"Your name",enter:"Sign in",contAs:"Continue as",switchU:"Switch user",testMode:"Test mode: sign in without a password.",tagline:"Installation locations, verified and signed on site.",logout:"Sign out",needName:"Enter your name to sign in.",curColor:"Current color (next pieces)",colorPh:"e.g. white, brown",color:"Color",kickerEl:"Kicker elbows",note:"Free text",noteText:"Text",photoNotes:"Text on photos",textPh:"Write here"},{
   tagline:"Installation locations, verified and signed on site.",
@@ -530,15 +530,35 @@ function review(){const j=cur,site=sd(j),sg=j.status==='signed',lk=locked(),nums
  ${(()=>{const tl=[];j.views.forEach(v=>v.items.forEach(it=>{if(it.k==='tx'&&(it.text||'').trim())tl.push(`<li>(${esc(v.name)}) ${esc(it.text)}</li>`)}));return tl.length?`<h3>${t('photoNotes')}</h3><ul style="white-space:pre-wrap">${tl.join('')}</ul>`:''})()}<h3>${t('pieceNotes')}</h3>${pn.length?`<ul>${pn.join('')}</ul>`:`<p class="hint">${t('none')}</p>`}
  ${sg?`<h2>${t('signed')}</h2><div class="two"><div><p class="hint">${t('supSig')}</p><img class="sigimg" src="${j.sig.sup}" alt=""><p>${esc(j.sig.supName)}</p></div><div><p class="hint">Verified by</p><img class="sigimg" src="${j.sig.inst}" alt=""><p>${esc(j.sig.instName)}</p></div></div>
  <p>${t('signedAt')}: ${fmt(j.signedAt)}</p><p class="hint">${t('integrity')}</p><p class="hash">${esc(j.hash)}</p>
- <label class="f" for="mailto">Send to (email)</label><input id="mailto" type="email" inputmode="email" value="${esc(ls('boss'))}" placeholder="office@company.com">
- <div class="acts"><button class="btn vis" data-act="pdf">${t('pdf')}</button><a class="btn" id="mail" href="${mailto(j)}" target="_blank" rel="noopener">${t('email')}</a></div><p id="pmsg" class="msg" role="status"></p>`
+ ${canSharePdf()?'':`<label class="f" for="mailto">Send to (email)</label><input id="mailto" type="email" inputmode="email" value="${esc(ls('boss'))}" placeholder="office@company.com">`}
+ <div class="acts" id="pdfacts">${canSharePdf()?`<button class="btn vis" data-act="share" id="shareBtn">Share PDF</button><button class="btn" data-act="pdf">${t('pdf')}</button>`:`<button class="btn vis" data-act="pdf">${t('pdf')}</button><a class="btn" id="mail" href="${mailto(j)}" target="_blank" rel="noopener">${t('email')}</a>`}</div>
+ <p class="hint">${canSharePdf()?'Share PDF opens your phone or computer share menu (Gmail, Mail, Outlook, WhatsApp…) with the PDF already attached.':'This browser cannot attach files to an email. Download the PDF, then attach it in your email.'}</p>
+ ${canSharePdf()?`<a class="hint" id="mail" href="${mailto(j)}" target="_blank" rel="noopener">Email without attachment</a>`:''}<p id="pmsg" class="msg" role="status"></p>`
  :lk?`<p class="banner gray">Draft by ${esc(j.authorName)}, not signed yet.</p>`
  :`<h2>${t('supSig')}</h2><p class="stmt">${t('stmt')}</p><label class="f" for="supName">${t('name')}</label><input id="supName" maxlength="80"><canvas class="pad" id="padS" aria-label="${t('supSig')}"></canvas><button class="btn sm ghost" data-act="clr" data-p="S">${t('clear')}</button>
  <h2>${t('instSig')}</h2><label class="f" for="instName">${t('name')}</label><input id="instName" value="${esc(session.name)}" readonly><canvas class="pad" id="padI" aria-label="${t('instSig')}"></canvas><button class="btn sm ghost" data-act="clr" data-p="I">${t('clear')}</button>
  <p class="hint">After signing, this version is locked for everyone. A correction is a new version.</p>
  <p id="serr" class="err" role="alert"></p><button class="btn vis big" data-act="finalize" id="finBtn">${t('finalize')}</button>`}
  </section>`;
- if(!sg&&!lk){pads.S=pad($('#padS'));pads.I=pad($('#padI'))}}
+ if(!sg&&!lk){pads.S=pad($('#padS'));pads.I=pad($('#padI'))}
+ if(sg)preparePdf(j);}
+// Share with the PDF attached (Web Share API: iPhone, Android, Chrome/Edge on Windows and Mac).
+// The PDF is built in advance: phones only open the share menu right after a tap.
+let pdfCache={id:'',blob:null,busy:null};
+const pdfName=j=>`${sd(j).wo?'WO-'+sd(j).wo+'-':''}Bldg-${j.bldg}-v${j.version}`.replace(/[^\w\-]+/g,'_')+'.pdf';
+function canSharePdf(){try{return !!(navigator.share&&navigator.canShare&&navigator.canShare({files:[new File([new Blob(['x'],{type:'application/pdf'})],'t.pdf',{type:'application/pdf'})]}))}catch(e){return false}}
+function preparePdf(j){
+  if(pdfCache.id===j.id&&(pdfCache.blob||pdfCache.busy))return pdfCache.busy||Promise.resolve(pdfCache.blob);
+  pdfCache={id:j.id,blob:null,busy:null};
+  pdfCache.busy=(async()=>{if(!window.jspdf)throw new Error('jspdf');await loadPhotos(j);const b=await makePDF(j);if(pdfCache.id===j.id){pdfCache.blob=b;pdfCache.busy=null;}return b})()
+    .catch(e=>{console.log('pdf',e);pdfCache.busy=null;throw e});
+  return pdfCache.busy;}
+async function sharePdf(){const m=$('#pmsg'),j=cur,site=sd(j);
+  if(!(pdfCache.id===j.id&&pdfCache.blob)){m.textContent='Preparing the PDF… tap Share PDF again in a moment.';try{await preparePdf(j);m.textContent='PDF ready. Tap Share PDF.';}catch(e){m.textContent=t('pdfErr')}return}
+  const file=new File([pdfCache.blob],pdfName(j),{type:'application/pdf'});
+  const subj=`Gutter scope - ${site.wo?'WO '+site.wo+' - ':''}Bldg ${j.bldg} - ${site.condo||site.address}`;
+  try{await navigator.share({files:[file],title:subj,text:`${subj}\nSigned by ${j.sig?.supName||'-'} (site supervisor) and ${j.sig?.instName||'-'}. Integrity (SHA-256): ${j.hash}`});m.textContent='';}
+  catch(e){if(e&&e.name==='AbortError'){m.textContent=''}else{console.log(e);m.textContent='Sharing is not available here. Use Download PDF.'}}}
 // The hash covers everything shown in the document; photos are immutable in the database.
 const canon=j=>JSON.stringify({siteId:j.siteId,wo:j.wo||'',condo:j.condo||'',address:j.address||'',bldg:j.bldg,model:j.model||'',notes:j.notes||'',gps:j.gps||null,version:j.version,prevId:j.prevId||'',views:j.views,sig:j.sig&&{supName:j.sig.supName,instName:j.sig.instName,sup:j.sig.sup,inst:j.sig.inst}});
 async function finalize(){const sn=$('#supName').value.trim().slice(0,80),err=$('#serr');
@@ -586,7 +606,7 @@ async function makePDF(j){const site=sd(j);const{jsPDF}=window.jspdf;const d=new
   d.text(`${APP.name} v${APP.version} · Created by ${APP.author} · ${APP.vendor}`,M,H-24);d.setTextColor(0)}
  return d.output('blob')}
 async function doPDF(){const m=$('#pmsg');m.textContent=t('pdfMaking');
- try{if(!window.jspdf)throw new Error('jspdf');await loadPhotos(cur);const b=await makePDF(cur);const fn=`${site.type==='job'?'WO-'+site.wo+'-':''}Bldg-${cur.bldg}-v${cur.version}`.replace(/[^\w\-]+/g,'_')+'.pdf';
+ try{const b=await preparePdf(cur);const fn=pdfName(cur);
   const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=fn;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000);m.textContent=t('pdfOk')}
  catch(e){console.log(e);m.textContent=t('pdfErr')}}
 
@@ -628,7 +648,8 @@ app.addEventListener('click',async e=>{const b=e.target.closest('[data-act]');if
  else if(a==='review'){selId=null;await flushSave();review()}
  else if(a==='clr')pads[b.dataset.p].clear();
  else if(a==='finalize')finalize();
- else if(a==='pdf')doPDF();});
+ else if(a==='pdf')doPDF();
+ else if(a==='share')sharePdf();});
 app.addEventListener('input',e=>{const id=e.target.id,v=e.target.value,it=selId&&cur&&find(selId);
  if(id==='mailto'){ls('boss',v.trim());const m=$('#mail');if(m)m.href=mailto(cur);return}
  if(!cur||locked())return;
