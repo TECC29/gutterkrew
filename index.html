@@ -3205,7 +3205,8 @@ async function buildPrintSelector(){
 // stockMoves/{loadId}: only the quantities of each load, so crew can check
 //   warehouse stock without reading other crews' loads.
 const MAX_CREW=4;
-const truckKey=t=>String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,20);
+// Same formula as the security rules: letters and digits, upper case, 1-20 characters.
+const truckKey=t=>String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
 let PEOPLE=[],myActive=null,pickedCrew=[],crewModalLoad=null,invitesList=[];
 const newId=()=>{const c='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';const a=new Uint8Array(20);crypto.getRandomValues(a);return Array.from(a,x=>c[x%62]).join('');};
 async function loadPeople(){try{PEOPLE=(await fbQuery('people')).map(p=>({uid:p.fid,name:p.name,role:p.role})).sort((a,b)=>String(a.name).localeCompare(b.name));}catch(e){}return PEOPLE;}
@@ -3233,16 +3234,18 @@ async function syncStockMoves(){
     const[logs,moves]=await Promise.all([fbQuery('logs'),fbQuery('stockMoves')]);
     const have=new Set(moves.map(m=>m.fid));
     const{db,doc,writeBatch}=fb();const todo=logs.filter(l=>!have.has(l.fid));
-    for(let i=0;i<todo.length;i+=10){const b=writeBatch(db);todo.slice(i,i+10).forEach(l=>b.set(doc(db,'stockMoves',l.fid),stockMoveOf(l)));await b.commit();}
+    for(let i=0;i<todo.length;i+=10){try{const b=writeBatch(db);todo.slice(i,i+10).forEach(l=>b.set(doc(db,'stockMoves',l.fid),stockMoveOf(l)));await b.commit();}catch(e){console.log('syncStockMoves chunk',i,e);}}
   }catch(e){console.log('syncStockMoves',e);}
 }
-const stockMoveOf=l=>({loaded:l.loaded||{},extraMats:l.extraMats||[],used:l.used??null,date:l.date||''});
+// Mirrors the load exactly (including a stored null), as the rules require.
+const stockMoveOf=l=>({loaded:'loaded' in l?l.loaded:{},extraMats:'extraMats' in l?l.extraMats:[],used:l.used??null,date:String(l.date||'')});
 
 // Who is busy: activeLoad locks (readable by every approved user).
 async function busyMap(){const m={};try{(await fbQuery('activeLoad')).forEach(x=>m[x.fid]=x);}catch(e){}return m;}
 async function lockProblems(truck,invited){
   try{
     const key=truckKey(truck);if(!key)return 'Enter truck number';
+    if(key.length>20)return 'Truck number too long (max 20 letters and digits)';
     const[t,busy]=await Promise.all([fbGet(`activeTruck/${key}`),busyMap()]);
     if(busy[session.uid])return `You are already on an open load (Truck ${busy[session.uid].truck||'?'}). Do the Return first, or ask your manager to release it.`;
     if(t)return `Truck ${t.truck||truck} already has an open load. Ask your manager if this is a mistake.`;
@@ -3278,8 +3281,11 @@ async function releaseLocks(fid,quiet){
   try{
     const{db,doc,writeBatch,where}=fb();
     const[locks,trucks]=await Promise.all([fbQuery('activeLoad',where('loadId','==',fid)),fbQuery('activeTruck',where('loadId','==',fid))]);
+    const log=await fbGet(`logs/${fid}`).catch(()=>null);
     const b=writeBatch(db);locks.forEach(x=>b.delete(doc(db,'activeLoad',x.fid)));trucks.forEach(x=>b.delete(doc(db,'activeTruck',x.fid)));
-    if(locks.length||trucks.length)await b.commit();
+    // Pending invitations of a released load would let someone join it later.
+    if(log&&(log.invitedUids||[]).length)b.update(doc(db,'logs',fid),{invitedUids:[]});
+    if(locks.length||trucks.length||(log&&(log.invitedUids||[]).length))await b.commit();
     if(!quiet){await writeAuditLog({type:'load_released',loadId:fid,locks:locks.length+trucks.length});toast('🔓 Released');buildHistory();}
   }catch(e){if(!quiet)toast('Could not release',true);else throw e;}
 }
@@ -3290,7 +3296,7 @@ async function refreshActive(){
   try{
     const{where}=fb();
     const[lock,inv]=await Promise.all([fbGet(`activeLoad/${session.uid}`),fbQuery('logs',where('invitedUids','array-contains',session.uid)).catch(()=>[])]);
-    myActive=lock;invitesList=inv.filter(l=>l.used==null);
+    myActive=lock;invitesList=inv.filter(l=>l.used!=null||(lock&&lock.loadId===l.fid));
     let log=null;if(lock){try{log=await fbGet(`logs/${lock.loadId}`);}catch(e){}}
     if(log&&memberOf(log)){todayLoad={fid:lock.loadId,...log};try{localStorage.setItem('dgk_today_load_'+session.uid,JSON.stringify(todayLoad));}catch(e){}}
     else if(!lock){
@@ -3434,8 +3440,10 @@ function startNotesWatch(){
     if(isMgrRole()){
       notesUnsub=onSnapshot(collection(db,'mgrInbox'),snap=>{notesUnread=snap.docs.map(d=>({fid:d.id,...d.data()}));renderNotesBadges();},err=>console.log('inbox watch:',err));
     }
-    invUnsub=onSnapshot(query(collection(db,'logs'),where('invitedUids','array-contains',session.uid)),snap=>{
-      invitesList=snap.docs.map(d=>({fid:d.id,...d.data()})).filter(l=>l.used==null);renderInvites();
+    invUnsub=onSnapshot(query(collection(db,'logs'),where('invitedUids','array-contains',session.uid)),async snap=>{
+      const rows=snap.docs.map(d=>({fid:d.id,...d.data()}));
+      let lock=null;try{lock=await fbGet(`activeLoad/${session.uid}`);}catch(e){}
+      invitesList=rows.filter(l=>l.used!=null||(lock&&lock.loadId===l.fid));renderInvites();
     },err=>console.log('invite watch:',err));
   }catch(e){console.log('notes watch:',e);}
 }
