@@ -481,6 +481,15 @@ body.authed .sidebar{display:flex}
     </div>
 
     <!-- PENDING APPROVAL -->
+    <div id="auth-noaccess" style="display:none">
+      <div class="card" style="text-align:center;padding:28px 20px">
+        <div style="font-size:44px;margin-bottom:10px">🔒</div>
+        <div style="font-size:17px;font-weight:800;margin-bottom:6px">No access to CrewTrack</div>
+        <div style="font-size:14px;color:var(--ink3);line-height:1.6;margin-bottom:16px">Hi <strong id="noaccess-name"></strong>. Your account does not have access to CrewTrack yet. Ask your manager to turn it on.</div>
+        <a class="btn btn-gold btn-full" id="noaccess-fp" href="fieldproof/" style="display:none;margin-bottom:8px">Open FieldProof →</a>
+        <button class="btn btn-outline btn-full" onclick="doLogout()">Sign out</button>
+      </div>
+    </div>
     <div id="auth-pending" style="display:none">
       <div class="card" style="text-align:center;padding:28px 20px">
         <div style="font-size:48px;margin-bottom:12px">⏳</div>
@@ -866,6 +875,12 @@ body.authed .sidebar{display:flex}
         <label>Name</label><input type="text" id="cc-name" placeholder="Full name">
         <label>Temporary Password</label>
         <div style="display:flex;gap:8px"><input type="text" id="cc-pass" style="flex:1;font-family:'JetBrains Mono',monospace" autocomplete="off"><button class="btn btn-outline btn-sm" type="button" onclick="el('cc-pass').value=genCode(10)">New</button></div>
+        <label>Access</label>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:14px;font-weight:600">
+          <label style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" id="cc-app-ct" style="width:auto"> CrewTrack</label>
+          <label style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" id="cc-app-fp" style="width:auto"> FieldProof</label>
+        </div>
+        <div style="font-size:12px;color:var(--ink3);margin-top:4px">Off by default. Turn on only what this person needs.</div>
         <div id="cc-err" class="alert a-err" style="display:none;margin-top:10px"><span class="ai">⚠️</span><span id="cc-err-msg"></span></div>
         <button class="btn btn-gold btn-full" id="cc-btn" style="margin-top:10px" onclick="createCrewAccount()">+ Create Account</button>
       </div>
@@ -951,6 +966,7 @@ body.authed .sidebar{display:flex}
     <button class="nav-item" id="bn-notes" onclick="showScreen('s-notes')"><i class="ti ti-message-2"></i><span>Notes</span><span class="nav-badge" id="notes-badge" style="display:none"></span></button>
     <button class="nav-item" id="bn-inventory" onclick="showScreen('s-inventory')"><i class="ti ti-building-warehouse"></i><span>Stock</span></button>
     <button class="nav-item" id="bn-admin" style="display:none" onclick="showScreen('s-admin')"><i class="ti ti-settings"></i><span>Admin</span></button>
+    <a class="nav-item" id="fp-link" href="fieldproof/" style="display:none;text-decoration:none"><i class="ti ti-clipboard-check"></i><span>Field Proof</span><i class="ti ti-external-link" style="margin-left:auto;font-size:16px;opacity:.6"></i></a>
   </nav>
   <div class="side-user">
     <i class="ti ti-user-circle"></i>
@@ -1130,7 +1146,7 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // Firestore document config/company, which only 29 Cyber edits, in the
 // Firebase console (the security rules block every write from the app).
 // No document = the app and its printed sheets show the 29 Cyber brand.
-const APP={name:'29Cyber CrewTrack',version:'2.3.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'2.4.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
   crewDomain:'crew.dgk.internal'   // crew sign-in: <Employee ID>@<crewDomain>
 };
@@ -1274,7 +1290,7 @@ function setLT(t){
   el('lt-admin').className='btn btn-sm '+(t==='admin'?'btn-gold':'btn-outline');
 }
 function showAuth(v){
-  ['login','register','pending','setpass'].forEach(x=>{
+  ['login','register','pending','setpass','noaccess'].forEach(x=>{
     const e=el('auth-'+x);if(e)e.style.display=x===v?'':'none';
   });
 }
@@ -1340,6 +1356,8 @@ async function doLogin(){
 const CODE_CHARS='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 function genCode(n=8){const a=new Uint32Array(n);crypto.getRandomValues(a);return Array.from(a,x=>CODE_CHARS[x%CODE_CHARS.length]).join('');}
 const crewEmail=empid=>`${empid}@${COMPANY.crewDomain}`;
+// Access per app: off unless a manager or the bigboss turns it on. The bigboss always has both.
+const hasApp=(u,app)=>!!u&&(u.role==='bigboss'||(u.apps&&u.apps[app]===true));
 let registering=false; // pauses the auth listener while an account is being created
 
 async function doRegister(){
@@ -1416,6 +1434,7 @@ async function createCrewAccount(){
     batch.set(doc(db,'users',newUser.uid),{
       name,empId:empid,email:crewEmail(empid),role:'crew',status:'approved',
       mustChangePassword:true,registeredAt:now,
+      apps:{crewtrack:!!el('cc-app-ct')?.checked,fieldproof:!!el('cc-app-fp')?.checked},
       createdBy:session.name,createdByUid:session.uid,approvedBy:session.name,approvedAt:now
     });
     if(idDoc)batch.update(doc(db,'employeeIds',empid),{used:true,assignedTo:name,assignedUid:newUser.uid});
@@ -1424,6 +1443,7 @@ async function createCrewAccount(){
     await F.signOut(tmpAuth);
     await writeAuditLog({type:'crew_account_created',empId:empid,targetUid:newUser.uid,method:'manager'});
     el('cc-empid').value='';el('cc-name').value='';el('cc-pass').value=genCode(10);
+    if(el('cc-app-ct'))el('cc-app-ct').checked=false;if(el('cc-app-fp'))el('cc-app-fp').checked=false;
     await syncPeople();
     toast(`✅ Account created for ${name}`);
     alert(`Account created.\n\nEmployee ID: ${empid}\nTemporary password: ${pass}\n\nGive these to ${name}. The app will ask for a new password at first sign-in.`);
@@ -1493,7 +1513,14 @@ async function _afterLogin(user){
     if(profile.mustChangePassword===true){
       showScreen('s-auth');showAuth('setpass');resetLoginBtn();return;
     }
+    // Access per app, denied by default (the bigboss always has both).
+    if(!hasApp(profile,'crewtrack')){
+      el('noaccess-name').textContent=profile.name||'';
+      el('noaccess-fp').style.display=hasApp(profile,'fieldproof')?'':'none';
+      showScreen('s-auth');showAuth('noaccess');resetLoginBtn();return;
+    }
     session={uid:user.uid,...profile};
+    el('fp-link').style.display=hasApp(profile,'fieldproof')?'flex':'none';
     el('tb-name').textContent=session.name;
     el('tb-role').textContent=ROLES[session.role]||session.role;
     document.body.classList.add('authed');
@@ -3014,6 +3041,8 @@ async function buildAdminUsers(){
     }
 
     // Approved users
+    const noCT=approved.filter(u=>u.role!=='bigboss'&&!hasApp(u,'crewtrack')).length;
+    if(session.role==='bigboss'&&noCT)html+=`<div class="alert a-warn"><span class="ai">🔑</span><div>${noCT} active user${noCT===1?' has':'s have'} no CrewTrack access (access is off by default since v2.4).<div style="margin-top:8px"><button class="btn btn-gold btn-sm" onclick="grantCrewTrackAll()">Grant CrewTrack to current users</button></div></div></div>`;
     html+=`<div class="sec-label">Active Users (${approved.length})</div>`;
     if(approved.length){
       html+=approved.map(u=>`
@@ -3021,6 +3050,7 @@ async function buildAdminUsers(){
           <div>
             <div style="font-size:13px;font-weight:700">${h(u.name)} <span class="badge badge-${esc(u.role||'crew')}">${h(ROLES[u.role]||u.role)}</span></div>
             <div style="font-size:11px;color:var(--ink3)">${h(u.empId?`ID: ${u.empId}`:u.email||'—')}${u.mustChangePassword?' · waiting for first sign-in':''}</div>
+            ${appToggles(u)}
             ${(u.role==='manager'||u.role==='bigboss')?`<label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;margin-top:4px;color:var(--ink2)"><input type="checkbox" ${u.fieldWorker?'checked':''} ${session.role==='bigboss'?'':'disabled'} onchange="setFieldWorker(${ja(u.fid)},this.checked)" style="width:auto"> Also works in the field</label>`:''}
             ${u.status!=='approved'?`<div style="font-size:11px;color:var(--red);font-weight:700">⚠️ Status "${h(u.status||'missing')}" — fix to "approved" in Firebase</div>`:''}
           </div>
@@ -3036,6 +3066,34 @@ async function buildAdminUsers(){
   }
 }
 
+// App keys per user. Managers set them for crew; the bigboss for everyone.
+function appToggles(u){
+  if(u.role==='bigboss')return `<div style="font-size:12px;color:var(--ink3);margin-top:4px">CrewTrack · FieldProof (Big Boss: always both)</div>`;
+  const can=session.role==='bigboss'||(isMgrRole()&&u.role==='crew');
+  const box=(app,label)=>`<label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;margin:0;color:var(--ink2)"><input type="checkbox" style="width:auto" ${u.apps?.[app]?'checked':''} ${can?'':'disabled'} onchange="setApp(${ja(u.fid)},${ja(app)},this.checked)"> ${label}</label>`;
+  return `<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px">${box('crewtrack','CrewTrack')}${box('fieldproof','FieldProof')}</div>`;
+}
+async function setApp(fid,app,on){
+  try{
+    const u=await fbGet(`users/${fid}`);if(!u)return;
+    const apps={crewtrack:!!u.apps?.crewtrack,fieldproof:!!u.apps?.fieldproof,[app]:!!on};
+    await fbUpdate(`users/${fid}`,{apps});
+    await writeAuditLog({type:'app_access',targetUid:fid,app,on:!!on});
+    if(app==='crewtrack')await syncPeople();
+    toast(`${on?'✅ Access on':'Access off'}: ${app==='crewtrack'?'CrewTrack':'FieldProof'}`);
+  }catch(e){toast(e.code==='permission-denied'?'Only the Big Boss can change a manager\'s access':'Could not save',true);buildAdminUsers();}
+}
+async function grantCrewTrackAll(){
+  if(session?.role!=='bigboss')return;
+  if(!confirm('Turn on CrewTrack for every active user who does not have it? FieldProof stays as it is.'))return;
+  try{
+    const users=(await fbQuery('users')).filter(u=>u.status!=='pending'&&u.role!=='bigboss'&&!hasApp(u,'crewtrack'));
+    const{db,doc,writeBatch}=fb();
+    for(let i=0;i<users.length;i+=20){const b=writeBatch(db);users.slice(i,i+20).forEach(u=>b.update(doc(db,'users',u.fid),{apps:{crewtrack:true,fieldproof:!!u.apps?.fieldproof}}));await b.commit();}
+    await writeAuditLog({type:'app_access_bulk',app:'crewtrack',count:users.length});
+    await syncPeople();toast(`✅ CrewTrack on for ${users.length} user${users.length===1?'':'s'}`);buildAdminUsers();
+  }catch(e){toast('Could not save',true);}
+}
 async function setFieldWorker(fid,on){
   if(session?.role!=='bigboss'){toast('Only the Big Boss can change this',true);return;}
   try{await fbUpdate(`users/${fid}`,{fieldWorker:!!on});await syncPeople();toast(on?'✅ Can be picked for a truck':'Removed from the crew list');}
@@ -3218,7 +3276,7 @@ async function syncPeople(){
   if(!isMgrRole())return;
   try{
     const[users,people]=await Promise.all([fbQuery('users'),fbQuery('people')]);
-    const want={};users.filter(u=>u.status!=='pending'&&(u.role==='crew'||u.fieldWorker===true)).forEach(u=>want[u.fid]={name:u.name||'',role:u.role});
+    const want={};users.filter(u=>u.status!=='pending'&&((u.role==='crew'&&hasApp(u,'crewtrack'))||(u.fieldWorker===true&&hasApp(u,'crewtrack')))).forEach(u=>want[u.fid]={name:u.name||'',role:u.role});
     const have={};people.forEach(p=>have[p.fid]=p);
     // Small batches: the rules look up each user's profile (max 20 lookups per batch).
     const{db,doc,writeBatch}=fb();const ops=[];
