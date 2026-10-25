@@ -121,7 +121,6 @@ dl.sum dt{color:var(--sub);font-weight:500}dl.sum dd{margin:0}
 .gate h2{color:#F3F0E8}
 .prep{display:flex;flex-direction:column;gap:1px;border-left:4px solid var(--vis);background:var(--card);padding:10px 12px;margin-top:6px}
 .prep b{font-size:17px}
-.embed .foot{display:none}
 .embed .top{position:sticky;top:0}
 a{color:var(--blue)}
 </style>
@@ -252,7 +251,7 @@ function arm(b,fn){if(b.dataset.armed==='1'){fn();return}b.dataset.armed='1';con
 // fpSites/{id}           site visit (type 'visit', author + managers only) or job (type 'job', managers create)
 // fpSites/{id}/proofs     one signed verification per building version (locked once signed)
 // fpSites/{id}/photos     compressed site photos (immutable)
-const APP={name:'29Cyber FieldProof',version:'2.1.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber FieldProof',version:'2.1.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={crewDomain:'crew.dgk.internal'};
 const L={en:Object.assign({newJob:"New job",editJob:"Job details",jobs:"Jobs",noJobs:"No jobs yet. Create the first one when you reach the site.",duplicate:"Duplicate layout",del:"Delete",confirm:"Confirm",address:"Address",condo:"Community",wo:"Work order",bldg:"Building #",model:"Building model",supervisor:"Supervisor",installer:"Installer (you)",notes:"Job notes",gpsBtn:"Capture GPS",gpsNone:"GPS not captured (optional)",gpsWait:"Getting position…",gpsFail:"GPS isn't available here. The address fields are enough.",dictHint:"Tip: use the keyboard mic to dictate.",saveForm:"Save and build",back:"Back",details:"Details",addPhoto:"Photo",photo:"Photo",photoName:"Photo name",delPhoto:"Delete photo",zoom:"Zoom",emptyPhoto:"Take or choose the first photo of the site.",bom:"Materials",bomEmpty:"No pieces placed.",review:"Review and sign",viewDoc:"View document",locked:"Job signed. The layout is locked.",flip:"Flip",size:"Size",arrow:"Arrow",qty:"Qty",otherName:"Material name",noteP:"Piece note",remove:"Remove piece",close:"Close",summary:"Summary",pieceNotes:"Piece notes",none:"None",supSig:"Supervisor signature",instSig:"Your signature",name:"Name",clear:"Clear",finalize:"Sign and finalize",stmt:"The supervisor confirms the downspout locations, elbows, drains, splash blocks and materials in this document are what was requested for this building.",needWo:"Fill in work order and building number.",needAddr:"Fill in the address or the community.",needSig:"Both names and both signatures are required.",needPieces:"Place at least one piece before signing.",signedAt:"Signed",integrity:"Integrity code (SHA-256)",pdf:"Download PDF",email:"Open email",pdfMaking:"Building PDF…",pdfOk:"PDF saved. Attach it to the email.",pdfNo:"Downloads aren't available in this view.",pdfErr:"The PDF couldn't be built.",bossEmail:"Boss email (for sending)",storeWarn:"This browser didn't allow saving on the device. Jobs are lost when the page closes.",draft:"Draft",signed:"Signed",other:"Other material",drain:"Drain",yourName:"Your name",enter:"Sign in",contAs:"Continue as",switchU:"Switch user",testMode:"Test mode: sign in without a password.",tagline:"Installation locations, verified and signed on site.",logout:"Sign out",needName:"Enter your name to sign in.",curColor:"Current color (next pieces)",colorPh:"e.g. white, brown",color:"Color",kickerEl:"Kicker elbows",note:"Free text",noteText:"Text",photoNotes:"Text on photos",textPh:"Write here"},{
   tagline:"Installation locations, verified and signed on site.",
@@ -379,7 +378,7 @@ function siteForm(type,s){
    <label class="f" for="f_address">${t('address')}</label><input id="f_address" value="${esc(siteDraft.address)}" maxlength="200" autocomplete="off">
    <label class="f" for="f_notes">Notes</label><textarea id="f_notes" rows="4" maxlength="4000">${esc(siteDraft.notes)}</textarea><p class="hint">${t('dictHint')}</p>
    <p id="ferr" class="err" role="alert"></p>
-   <button class="btn vis big" data-act="saveSite">Save</button></section>`;
+   <button class="btn vis big" data-act="saveSite">Save</button>${foot()}</section>`;
 }
 async function saveSite(){
   const g=k=>($('#f_'+k)?.value||'').trim(),err=$('#ferr');
@@ -472,7 +471,7 @@ function proofForm(p){
    <div class="two"><div><label class="f" for="f_bldg">${t('bldg')} *</label><input id="f_bldg" value="${esc(proofDraft.bldg)}" maxlength="20" ${p?'readonly':''}></div><div><label class="f" for="f_model">${t('model')}</label><input id="f_model" value="${esc(proofDraft.model)}" maxlength="60"></div></div>
    <div class="gps"><button class="btn" data-act="gps">${t('gpsBtn')}</button><span id="gpsOut">${gpsTxt(proofDraft.gps)}</span></div>
    <label class="f" for="f_notes">${t('notes')}</label><textarea id="f_notes" rows="4" maxlength="4000">${esc(proofDraft.notes)}</textarea><p class="hint">${t('dictHint')}</p>
-   <p id="ferr" class="err" role="alert"></p><button class="btn vis big" data-act="saveProof">${p?'Save':t('saveForm')}</button></section>`;}
+   <p id="ferr" class="err" role="alert"></p><button class="btn vis big" data-act="saveProof">${p?'Save':t('saveForm')}</button>${foot()}</section>`;}
 const gpsTxt=g=>g?`${g.lat.toFixed(6)}, ${g.lng.toFixed(6)} (±${Math.round(g.acc)} m)`:t('gpsNone');
 const proofData=p=>({siteId:p.siteId,bldg:p.bldg,model:p.model||'',notes:p.notes||'',gps:p.gps||null,views:p.views||[],curColor:p.curColor||'',
   version:p.version,prevId:p.prevId||'',prevSite:p.prevSite||'',status:p.status,authorUid:p.authorUid,authorName:p.authorName,createdAt:p.createdAt,updatedAt:now(),sig:p.sig||null,signedAt:p.signedAt||null,hash:p.hash||''});
@@ -527,7 +526,7 @@ async function editor(){
  </div><aside class="side">
  ${lk||!v?'':`<label class="f" for="curColor" style="margin-top:0">${t('curColor')}</label><input id="curColor" list="clist" value="${esc(cur.curColor||'')}" placeholder="${t('colorPh')}" autocomplete="off" style="margin-bottom:8px"><datalist id="clist">${knownColors().map(c=>`<option value="${esc(c)}">`).join('')}</datalist><div class="pal">${Object.keys(K).map(k=>`<button class="pc" data-act="add" data-k="${k}">${icon(k)}<span>${kn(k)}</span></button>`).join('')}</div>`}
  <div id="selp"></div><div class="bomc"><h3>${t('bom')}</h3><div id="bom"></div></div>
- <button class="btn vis big" data-act="review">${j.status==='signed'?t('viewDoc'):lk?'View':t('review')}</button></aside></div>`;
+ <button class="btn vis big" data-act="review">${j.status==='signed'?t('viewDoc'):lk?'View':t('review')}</button></aside></div>${foot()}`;
  bindStage();draw();}
 // Photos are compressed in the browser (max 1280 px) to stay small in the database.
 async function addPhoto(file){if(!file||locked())return;const msg=$('#phmsg');
@@ -561,7 +560,7 @@ function review(){const j=cur,site=sd(j),sg=j.status==='signed',lk=locked(),nums
  <h2>${t('instSig')}</h2><label class="f" for="instName">${t('name')}</label><input id="instName" value="${esc(session.name)}" readonly><canvas class="pad" id="padI" aria-label="${t('instSig')}"></canvas><button class="btn sm ghost" data-act="clr" data-p="I">${t('clear')}</button>
  <p class="hint">After signing, this version is locked for everyone. A correction is a new version.</p>
  <p id="serr" class="err" role="alert"></p><button class="btn vis big" data-act="finalize" id="finBtn">${t('finalize')}</button>`}
- </section>`;
+ ${foot()}</section>`;
  if(!sg&&!lk){pads.S=pad($('#padS'));pads.I=pad($('#padI'))}
  if(sg)preparePdf(j);}
 // Share with the PDF attached (Web Share API: iPhone, Android, Chrome/Edge on Windows and Mac).
