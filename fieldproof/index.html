@@ -251,7 +251,7 @@ function arm(b,fn){if(b.dataset.armed==='1'){fn();return}b.dataset.armed='1';con
 // fpSites/{id}           site visit (type 'visit', author + managers only) or job (type 'job', managers create)
 // fpSites/{id}/proofs     one signed verification per building version (locked once signed)
 // fpSites/{id}/photos     compressed site photos (immutable)
-const APP={name:'29Cyber FieldProof',version:'2.1.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber FieldProof',version:'2.1.2',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={crewDomain:'crew.dgk.internal'};
 const L={en:Object.assign({newJob:"New job",editJob:"Job details",jobs:"Jobs",noJobs:"No jobs yet. Create the first one when you reach the site.",duplicate:"Duplicate layout",del:"Delete",confirm:"Confirm",address:"Address",condo:"Community",wo:"Work order",bldg:"Building #",model:"Building model",supervisor:"Supervisor",installer:"Installer (you)",notes:"Job notes",gpsBtn:"Capture GPS",gpsNone:"GPS not captured (optional)",gpsWait:"Getting position…",gpsFail:"GPS isn't available here. The address fields are enough.",dictHint:"Tip: use the keyboard mic to dictate.",saveForm:"Save and build",back:"Back",details:"Details",addPhoto:"Photo",photo:"Photo",photoName:"Photo name",delPhoto:"Delete photo",zoom:"Zoom",emptyPhoto:"Take or choose the first photo of the site.",bom:"Materials",bomEmpty:"No pieces placed.",review:"Review and sign",viewDoc:"View document",locked:"Job signed. The layout is locked.",flip:"Flip",size:"Size",arrow:"Arrow",qty:"Qty",otherName:"Material name",noteP:"Piece note",remove:"Remove piece",close:"Close",summary:"Summary",pieceNotes:"Piece notes",none:"None",supSig:"Supervisor signature",instSig:"Your signature",name:"Name",clear:"Clear",finalize:"Sign and finalize",stmt:"The supervisor confirms the downspout locations, elbows, drains, splash blocks and materials in this document are what was requested for this building.",needWo:"Fill in work order and building number.",needAddr:"Fill in the address or the community.",needSig:"Both names and both signatures are required.",needPieces:"Place at least one piece before signing.",signedAt:"Signed",integrity:"Integrity code (SHA-256)",pdf:"Download PDF",email:"Open email",pdfMaking:"Building PDF…",pdfOk:"PDF saved. Attach it to the email.",pdfNo:"Downloads aren't available in this view.",pdfErr:"The PDF couldn't be built.",bossEmail:"Boss email (for sending)",storeWarn:"This browser didn't allow saving on the device. Jobs are lost when the page closes.",draft:"Draft",signed:"Signed",other:"Other material",drain:"Drain",yourName:"Your name",enter:"Sign in",contAs:"Continue as",switchU:"Switch user",testMode:"Test mode: sign in without a password.",tagline:"Installation locations, verified and signed on site.",logout:"Sign out",needName:"Enter your name to sign in.",curColor:"Current color (next pieces)",colorPh:"e.g. white, brown",color:"Color",kickerEl:"Kicker elbows",note:"Free text",noteText:"Text",photoNotes:"Text on photos",textPh:"Write here"},{
   tagline:"Installation locations, verified and signed on site.",
@@ -281,6 +281,13 @@ let site=null,linkedVisit=null,proofs=[],cur=null,vi=0,selId=null,zoom=1,drag=nu
 const photos=new Map();
 const photoKey=v=>v&&v.ph?`${v.ph.s}/${v.ph.id}`:'';
 const photoSrc=v=>photos.get(photoKey(v))||'';
+// Original photo (no pieces) in a new tab. Built synchronously so the tap still counts as a user action
+// (popup blockers). If the browser blocks the tab, it downloads the file instead.
+function openPhoto(v){const src=v&&photoSrc(v);const m=$('#phmsg');if(!src||!/^data:image\/jpeg;base64,/.test(src)){if(m)m.textContent='Photo not loaded.';return}
+ const bin=atob(src.split(',')[1]),u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);
+ const url=URL.createObjectURL(new Blob([u8],{type:'image/jpeg'})),w=window.open(url,'_blank');
+ if(!w){const a=document.createElement('a');a.href=url;a.download=((v.name||'photo').replace(/[^\w-]+/g,'_'))+'.jpg';document.body.appendChild(a);a.click();a.remove();if(m)m.textContent='Photo downloaded.'}
+ setTimeout(()=>URL.revokeObjectURL(url),60000)}
 async function loadPhotos(p){for(const v of p.views||[]){const k=photoKey(v);if(!k||photos.has(k))continue;try{const d=await fbGet(`fpSites/${v.ph.s}/photos/${v.ph.id}`);if(d)photos.set(k,d.data);}catch(e){console.log('photo',e)}}}
 const KIND={field:'Field notes',lead:'Sales lead'};
 const STATUS={open:'Open',converted:'Job created',closed:'Closed',draft:'Draft',signed:'Signed'};
@@ -519,7 +526,7 @@ async function editor(){
  <div class="ed"><div>
  <div class="tabs">${j.views.map((x,i)=>`<button class="tab ${i===vi?'on':''}" data-act="view" data-i="${i}">${esc(x.name)}</button>`).join('')}${lk||!v?'':`<label class="tab">+ ${t('addPhoto')}<input type="file" accept="image/*" class="ph" hidden></label>`}</div>
  ${j.status==='signed'?`<p class="banner">${t('locked')}</p>`:lk?`<p class="banner gray">Draft by ${esc(j.authorName)}. Only the author can edit it.</p>`:`<p class="savest" id="savest">Changes save automatically.</p>`}
- ${v?`<div class="vrow">${lk?'':`<input id="vname" value="${esc(v.name)}" aria-label="${t('photoName')}" maxlength="40">`}<label class="zm">${t('zoom')}<input type="range" id="zoom" min="1" max="3" step="0.25" value="${zoom}"></label>${lk?'':`<button class="btn sm ghost" data-act="delView">${t('delPhoto')}</button>`}</div>
+ ${v?`<div class="vrow">${lk?'':`<input id="vname" value="${esc(v.name)}" aria-label="${t('photoName')}" maxlength="40">`}<label class="zm">${t('zoom')}<input type="range" id="zoom" min="1" max="3" step="0.25" value="${zoom}"></label><button class="btn sm ghost" data-act="openPhoto">Open original photo</button>${lk?'':`<button class="btn sm ghost" data-act="delView">${t('delPhoto')}</button>`}</div>
  <div class="stage" id="stage"><svg id="sv" viewBox="0 0 ${v.w} ${v.h}" style="width:${zoom*100}%"><image href="${photoSrc(v)}" width="${v.w}" height="${v.h}"/><g id="lay"></g></svg></div>`
  :lk?`<div class="nophoto"><p>No photos.</p></div>`:`<div class="nophoto"><p>${t('emptyPhoto')}</p><label class="btn vis big">${t('addPhoto')}<input type="file" accept="image/*" class="ph" hidden></label></div>`}
  <p id="phmsg" class="msg" role="status"></p>
@@ -661,6 +668,7 @@ app.addEventListener('click',async e=>{const b=e.target.closest('[data-act]');if
  else if(a==='editForm')proofForm(cur);
  else if(a==='toEditor')editor();
  else if(a==='view'){vi=+b.dataset.i;selId=null;editor()}
+ else if(a==='openPhoto')openPhoto(cur.views[vi]);
  else if(a==='delView')arm(b,async()=>{cur.views.splice(vi,1);vi=Math.max(0,vi-1);selId=null;await persist(cur);editor()});
  else if(a==='add')addPiece(b.dataset.k);
  else if(a==='desel'){selId=null;draw()}
