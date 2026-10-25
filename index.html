@@ -504,6 +504,7 @@ body.authed .sidebar{display:flex}
   <div class="page-title">Today</div>
   <div class="page-sub" id="dash-date"></div>
   <div id="notes-alert"></div>
+  <div id="invites"></div>
 
   <!-- Manager overview (managers and Big Boss only) -->
   <div id="mgr-dash" style="display:none">
@@ -543,7 +544,11 @@ body.authed .sidebar{display:flex}
     <div class="sec-label">Jobs Today</div>
     <div id="dash-jobs-list"></div>
 
-    <button class="btn btn-outline btn-full" style="margin-bottom:8px" onclick="openNotes(todayLoad&&todayLoad.fid)"><i class="ti ti-message-2"></i> Notes / Change order</button>
+    <div id="dash-invited" style="font-size:13px;color:var(--ink3);margin:-2px 0 10px"></div>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <button class="btn btn-outline" style="flex:1" onclick="openNotes(todayLoad&&todayLoad.fid)"><i class="ti ti-message-2"></i> Notes</button>
+      <button class="btn btn-outline" style="flex:1" onclick="openCrewModal(todayLoad&&todayLoad.fid)"><i class="ti ti-user-plus"></i> Add crew</button>
+    </div>
     <!-- Add job button -->
     <button class="btn btn-gold btn-full" id="dash-add-job-btn" onclick="openJobModal()">+ Add Job / Close Job</button>
 
@@ -560,6 +565,7 @@ body.authed .sidebar{display:flex}
     <div class="step" id="st3">3·Review</div>
   </div>
 
+  <div id="load-block"></div>
   <!-- Step 1: Truck setup -->
   <div id="ls1">
     <div class="card">
@@ -577,16 +583,15 @@ body.authed .sidebar{display:flex}
       <div class="sec-label">Job Info</div>
       <label>Job ID / Work Order Number</label>
       <input type="text" id="job-id" placeholder="e.g. WO-2024-001">
+      <label>Condo Number</label>
+      <input type="text" id="condo" placeholder="e.g. Bldg 12 / Unit 204" maxlength="40">
       <label>Job Address</label>
       <input type="text" id="job" placeholder="123 Main St, City">
     </div>
     <div class="card">
-      <div class="sec-label">Crew Members</div>
-      <div id="crew-tags" class="tag-list"></div>
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <input type="text" id="crew-inp" placeholder="Name" style="flex:1" onkeypress="if(event.key==='Enter')addCrew()">
-        <button class="btn btn-outline btn-sm" onclick="addCrew()">+ Add</button>
-      </div>
+      <div class="sec-label">Crew on this truck</div>
+      <div style="font-size:13px;color:var(--ink3);margin-bottom:8px">You are on the crew. Pick your coworkers (up to 3). Each one confirms on their own phone.</div>
+      <div id="crew-picker"></div>
     </div>
     <button class="btn btn-gold btn-full" onclick="goLS2()">Next: Materials →</button>
   </div>
@@ -988,6 +993,16 @@ body.authed .sidebar{display:flex}
 </div>
 
 <!-- ══ SEND MODAL ═════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="crew-modal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">👥 Add crew member</div>
+    <div style="font-size:13px;color:var(--ink3);margin-bottom:10px">The person confirms on their own phone before joining.</div>
+    <div id="crew-modal-list"></div>
+    <button class="btn btn-outline btn-full" style="margin-top:12px" onclick="closeCrewModal()">Close</button>
+  </div>
+</div>
+
 <div class="modal-overlay" id="send-modal">
   <div class="modal">
     <div class="modal-handle"></div>
@@ -1115,7 +1130,7 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // Firestore document config/company, which only 29 Cyber edits, in the
 // Firebase console (the security rules block every write from the app).
 // No document = the app and its printed sheets show the 29 Cyber brand.
-const APP={name:'29Cyber CrewTrack',version:'2.2.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'2.3.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
   crewDomain:'crew.dgk.internal'   // crew sign-in: <Employee ID>@<crewDomain>
 };
@@ -1204,7 +1219,7 @@ async function syncOfflineQueue(){
     try{
       if(item.type==='addLog') await fbAdd('logs',item.data);
       else if(item.type==='updateLog') await fbUpdate(`logs/${item.data.fid}`,item.data.update);
-      else if(item.type==='addJob') await fbAdd('jobs',item.data);
+      else if(item.type==='addJob') await fbAdd(`logs/${item.data.loadId}/jobs`,item.data);
     }catch(e){ remaining.push(item); }
   }
   saveOfflineQueue(remaining);
@@ -1242,6 +1257,7 @@ function showScreen(id){
   toggleNav(false);window.scrollTo(0,0);
   if(id==='s-dash') buildDash();
   if(id==='s-return') buildReturnScreen();
+  if(id==='s-load') buildLoadStart();
   if(id==='s-history') buildHistory();
   if(id==='s-notes') buildNotesIndex();
   if(id==='s-inventory') buildInventory();
@@ -1408,6 +1424,7 @@ async function createCrewAccount(){
     await F.signOut(tmpAuth);
     await writeAuditLog({type:'crew_account_created',empId:empid,targetUid:newUser.uid,method:'manager'});
     el('cc-empid').value='';el('cc-name').value='';el('cc-pass').value=genCode(10);
+    await syncPeople();
     toast(`✅ Account created for ${name}`);
     alert(`Account created.\n\nEmployee ID: ${empid}\nTemporary password: ${pass}\n\nGive these to ${name}. The app will ask for a new password at first sign-in.`);
     buildAdminUsers();
@@ -1492,6 +1509,7 @@ async function _afterLogin(user){
     el('dash-date').textContent=today();
     await Promise.all([loadAppConfig(),loadCompany()]);
     startNotesWatch();
+    if(isMgrRole()){syncPeople().then(syncStockMoves);}
     await syncOfflineQueue();
     // Restore today's load from localStorage
     try{
@@ -1517,7 +1535,7 @@ async function _afterLogin(user){
 }
 
 async function doLogout(){
-  stopNotesWatch();session=null;CUSTOMER=null;applyBrand();todayLoad=null;todayJobs=[];crewList=[];selColors=[];extraMats=[];fpItems=[];recipients=[];
+  stopNotesWatch();session=null;CUSTOMER=null;applyBrand();todayLoad=null;todayJobs=[];crewList=[];pickedCrew=[];PEOPLE=[];myActive=null;selColors=[];extraMats=[];fpItems=[];recipients=[];
   try{await fb().signOut(fb().auth);}catch(e){}
   document.body.classList.remove('authed','nav-open');
   if(el('bell-btn'))el('bell-btn').style.display='none';
@@ -1565,9 +1583,7 @@ function toggleColorTag(div){const c=div.getAttribute('data-color');const i=selC
 async function addColor(){if(!(session?.role==='manager'||session?.role==='bigboss'))return;const v=el('color-inp').value.trim();if(!v)return;if(!COLORS.includes(v))COLORS.push(v);if(!selColors.includes(v))selColors.push(v);el('color-inp').value='';await fbSet('config/colors',{list:COLORS});buildColorTags();}
 
 // ═══════════════════════ CREW ════════════════════════════════════
-function addCrew(){const v=el('crew-inp').value.trim();if(!v||crewList.includes(v))return;crewList.push(v);el('crew-inp').value='';renderCrew();}
-function removeCrew(n){crewList=crewList.filter(c=>c!==n);renderCrew();}
-function renderCrew(){el('crew-tags').innerHTML=crewList.map(c=>`<div class="crew-tag">${h(c)}<span class="x" onclick="removeCrew(${ja(c)})">×</span></div>`).join('');}
+// Crew is picked from registered people in the Morning Load (see CREW & LOCKS).
 
 // ═══════════════════════ EXTRA MATS ══════════════════════════════
 function addExtra(){
@@ -1584,8 +1600,9 @@ function renderExtras(){el('extra-list').innerHTML=extraMats.map((m,i)=>`<div st
 function setSteps(a){['st1','st2','st3'].forEach((s,i)=>el(s).className='step'+(i<a?' done':i===a?' active':''));}
 function goLS1(){el('ls1').style.display='';el('ls2').style.display='none';el('ls3').style.display='none';setSteps(0);}
 // keep=true when coming back from Review: the materials already added stay.
-function goLS2(keep=false){
+async function goLS2(keep=false){
   if(!el('truck').value.trim()){toast('Enter truck number',true);return;}
+  if(!keep){const msg=await lockProblems(el('truck').value,pickedCrew);if(msg){toast(msg,true);return;}}
   el('ls1').style.display='none';el('ls2').style.display='';el('ls3').style.display='none';setSteps(1);
   pendingScanBox=null;
   el('scan-pending').style.display='none';
@@ -1716,7 +1733,8 @@ function buildLoadSummary(){
       <div><div style="font-size:10px;opacity:.6">Job Date</div><div style="font-size:12px;font-weight:600;margin-top:2px;color:var(--accent)">${jdDisplay}</div></div>
       <div><div style="font-size:10px;opacity:.6">Job ID</div><div style="font-size:12px;font-weight:700;margin-top:2px;font-family:'JetBrains Mono',monospace">${h(el('job-id').value||'—')}</div></div>
       <div><div style="font-size:10px;opacity:.6">Address</div><div style="font-size:12px;font-weight:600;margin-top:2px">${h(el('job').value||'—')}</div></div>
-      <div style="grid-column:1/-1"><div style="font-size:10px;opacity:.6">Crew</div><div style="font-size:12px;font-weight:600;margin-top:2px">${h(crewList.join(', ')||'—')}</div></div>
+      <div style="grid-column:1/-1"><div style="font-size:10px;opacity:.6">Crew</div><div style="font-size:12px;font-weight:600;margin-top:2px">${h([session.name+' (you)',...pickedCrew.map(u=>personName(u)+' (invited)')].join(', '))}</div></div>
+      <div><div style="font-size:10px;opacity:.6">Condo</div><div style="font-size:12px;font-weight:600;margin-top:2px">${h(el('condo').value||'—')}</div></div>
     </div>
   </div>`;
   html+=`<div class="alert a-info"><span class="ai">ℹ️</span><div>Stock will be verified when you tap <strong>Confirm Load</strong>. If quantities exceed warehouse stock, the load will be blocked.</div></div>`;
@@ -1726,8 +1744,9 @@ function buildLoadSummary(){
 async function getCurrentStock(){
   const stock={};
   try{
-    const{orderBy}=fb();
-    const logs=await fbQuery('logs',orderBy('date','desc'));
+    // Managers read the loads; crew read stockMoves (quantities only, one per
+    // load, kept equal to the load by the security rules).
+    const logs=isMgrRole()?await fbQuery('logs'):await fbQuery('stockMoves');
     const receipts=await fbQuery('receipts');
     receipts.forEach(r=>{
       if(!stock[r.materialId])stock[r.materialId]={};
@@ -1850,6 +1869,9 @@ async function confirmLoad(){
   }
 
   // Stock OK — proceed with save
+  const lockMsg=await lockProblems(el('truck').value,pickedCrew);
+  if(lockMsg){errorSound();toast(lockMsg,true);if(confirmBtn){confirmBtn.textContent='✓ Confirm Load';confirmBtn.disabled=false;}return;}
+  const names={[session.uid]:session.name};pickedCrew.forEach(u=>names[u]=personName(u));
   todayLoad={
     date:new Date().toISOString(),dateDisplay:today(),
     jobDate:jd,jobDateDisplay:jdDisplay,
@@ -1857,7 +1879,9 @@ async function confirmLoad(){
     odometer:parseFloat(el('odometer').value)||0,
     jobId:el('job-id').value.trim(),
     job:el('job').value.trim(),
-    crew:[...crewList],
+    condo:el('condo').value.trim().slice(0,40),
+    truckKey:truckKey(el('truck').value),
+    crew:[session.name],crewUids:[session.uid],invitedUids:[...pickedCrew],crewNames:names,
     loaded:data,extraMats:[...extraMats],
     jobs:[],used:null,status:'open',
     submittedBy:session.name,submittedByUid:session.uid,approvedBy:null
@@ -1871,8 +1895,8 @@ async function confirmLoad(){
       if(confirmBtn){confirmBtn.textContent='✓ Confirm Load';confirmBtn.disabled=false;}
       return;
     }
-    const ref=await fbAdd('logs',todayLoad);
-    todayLoad.fid=ref.id;
+    const ref={id:await createLoadWithLocks(todayLoad)};
+    todayLoad.fid=ref.id;pickedCrew=[];
     extraMats=[];
     localStorage.setItem('dgk_today_load_'+session.uid,JSON.stringify(todayLoad));
     // Audit log — load confirmed
@@ -1900,7 +1924,10 @@ async function confirmLoad(){
     showScreen('s-dash');
     toast('✅ Load confirmed!');
   }catch(e){
-    toast('Error saving.',true);
+    console.log('confirmLoad',e);
+    const again=await lockProblems(todayLoad?.truck||el('truck').value,todayLoad?.invitedUids||pickedCrew).catch(()=>'');
+    todayLoad=null;
+    toast(again||(e.code==='permission-denied'?'Not allowed. Ask your manager to check your account.':'Error saving.'),true);
     if(confirmBtn){confirmBtn.textContent='✓ Confirm Load';confirmBtn.disabled=false;}
   }
 }
@@ -1994,8 +2021,9 @@ async function buildDash(){
       }
     }catch(e){}
   }
-  // Try to restore today's load from localStorage first (offline support)
-  if(!todayLoad){
+  await refreshActive();
+  // Offline: restore today's load from this device
+  if(!todayLoad&&isOffline){
     try{
       const s=localStorage.getItem('dgk_today_load_'+session.uid);
       if(s){
@@ -2006,16 +2034,19 @@ async function buildDash(){
     }catch(e){}
   }
   if(!todayLoad){
-    el('dash-no-load').style.display='';el('dash-load-card').style.display='none';return;
+    // Invited to a truck: confirm or decline first, no "start a load" next to it.
+    el('dash-no-load').style.display=invitesList.length?'none':'';el('dash-load-card').style.display='none';return;
   }
   el('dash-no-load').style.display='none';el('dash-load-card').style.display='';
   el('dash-truck').textContent=todayLoad.truck;
   el('dash-crew').textContent=(todayLoad.crew||[]).join(', ')||'—';
+  const inv=(todayLoad.invitedUids||[]).map(u=>todayLoad.crewNames?.[u]||personName(u)||'?');
+  el('dash-invited').textContent=inv.length?`Waiting to confirm: ${inv.join(', ')}`:'';
   // Load jobs
   try{
     if(!isOffline){
       const{where}=fb();
-      todayJobs=await fbQuery('jobs',where('loadId','==',todayLoad.fid));
+      todayJobs=await fbQuery(`logs/${todayLoad.fid}/jobs`);
     }
   }catch(e){}
   el('dash-jobs-count').textContent=todayJobs.length;
@@ -2091,7 +2122,7 @@ async function saveJob(){
   const job={loadId:todayLoad.fid,jobNum:todayJobs.length+1,address,notes:el('jm-notes').value.trim(),used,fieldPurchases:[...fpItems],date:new Date().toISOString(),submittedBy:session.name};
   try{
     if(isOffline){queueOffline('addJob',job);todayJobs.push({fid:'offline_'+uid(),...job});}
-    else{const ref=await fbAdd('jobs',job);todayJobs.push({fid:ref.id,...job});}
+    else{const ref=await fbAdd(`logs/${todayLoad.fid}/jobs`,job);todayJobs.push({fid:ref.id,...job});}
     closeJobModal();buildDash();toast(`✅ Job ${job.jobNum} closed`);
   }catch(e){toast('Error saving job: '+e.message,true);}
 }
@@ -2551,7 +2582,7 @@ async function closeReturnDay(){
   todayLoad.returnedBoxes=retScannedBoxes.map(b=>({boxId:b.boxId,status:b.status,remainingQty:b.remainingQty,usedQty:b.usedQty}));
 
   try{
-    if(todayLoad.fid)await fbUpdate(`logs/${todayLoad.fid}`,{
+    if(todayLoad.fid)await returnLoadAndRelease(todayLoad.fid,{
       used,status:'pending',
       jobs:todayLoad.jobs,
       returnedBoxes:todayLoad.returnedBoxes
@@ -2590,11 +2621,8 @@ async function buildHistory(){
   try{
     const{orderBy,where}=fb();
     // Use simple orderBy only — avoids composite index requirement
-    let logs=await fbQuery('logs',orderBy('date','desc'));
-    // Filter client-side for crew
-    if(session.role==='crew'){
-      logs=logs.filter(l=>l.submittedByUid===session.uid);
-    }
+    // Crew: only loads they are on (the security rules allow nothing else).
+    let logs=isMgrRole()?await fbQuery('logs',orderBy('date','desc')):byNewest(await myLogs(),'date');
     el('hist-spinner').style.display='none';
     if(!logs.length){el('hist-empty').style.display='';return;}
     el('hist-list').innerHTML=logs.map(l=>rCardHTML(l,session.role!=='crew')).join('');
@@ -2605,6 +2633,14 @@ async function buildHistory(){
   }
 }
 
+function crewLine(log,isAdmin){
+  if(!log.crewUids)return h((log.crew||[]).join(', ')||'—');
+  const nm=u=>log.crewNames?.[u]||personName(u)||'?';
+  const x=u=>isAdmin?` <span style="cursor:pointer;color:var(--red)" title="Remove" onclick="removeFromLoad(${ja(log.fid||'')},${ja(u)})">✕</span>`:'';
+  const on=(log.crewUids||[]).map(u=>h(nm(u))+x(u)).join(', ');
+  const inv=(log.invitedUids||[]).map(u=>h(nm(u))+' (invited)'+x(u)).join(', ');
+  return [on,inv].filter(Boolean).join(', ')||'—';
+}
 function rCardHTML(log,isAdmin){
   const bc=log.status==='approved'?'badge-approved':log.status==='open'?'badge-open':'badge-pending';
   const bt=log.status==='approved'?`✅ ${h(log.approvedBy||'')}`:log.status==='open'?'Open':'⏳ Pending';
@@ -2625,10 +2661,13 @@ function rCardHTML(log,isAdmin){
        <button class="btn btn-outline btn-sm" onclick="openSendModalById(${ja(fid)})">📤</button>
        <button class="btn btn-dark btn-sm" onclick="printLogById(${ja(fid)})">🖨️</button>
        <button class="btn btn-outline btn-sm" onclick="openNotes(${ja(fid)})">📝 Notes</button>
+       <button class="btn btn-outline btn-sm" onclick="openCrewModal(${ja(fid)})">👥 Add</button>
+       ${log.used==null&&log.crewUids?`<button class="btn btn-outline btn-sm" onclick="releaseLocks(${ja(fid)})">🔓 Release</button>`:''}
        <button class="btn btn-red btn-sm" onclick="deleteLog(${ja(fid)})">🗑</button>`
     :`<button class="btn btn-outline btn-sm" onclick="openSendModalById(${ja(fid)})">📤</button>
       <button class="btn btn-dark btn-sm" onclick="printLogById(${ja(fid)})">🖨️</button>
-      <button class="btn btn-outline btn-sm" onclick="openNotes(${ja(fid)})">📝 Notes</button>`;
+      <button class="btn btn-outline btn-sm" onclick="openNotes(${ja(fid)})">📝 Notes</button>
+      ${memberOf(log)?`<button class="btn btn-outline btn-sm" onclick="openCrewModal(${ja(fid)})">👥 Add</button>`:''}`;
   return `<div class="rcard" id="rcard-${h(fid)}">
     <div class="rcard-hdr"><div>
       <div class="rcard-title">🚛 Truck ${h(log.truck)}</div>
@@ -2636,10 +2675,11 @@ function rCardHTML(log,isAdmin){
       ${log.jobDateDisplay&&log.jobDateDisplay!==log.dateDisplay?`<div class="rcard-meta hi">Job: ${h(log.jobDateDisplay)}</div>`:''}
       <div class="rcard-meta">Doc: ${h(docNumber(log))}</div>
       ${log.jobId?`<div class="rcard-meta">Job ID: ${h(log.jobId)}</div>`:''}
+      ${log.condo?`<div class="rcard-meta">Condo: ${h(log.condo)}</div>`:''}
       ${log.odometer?`<div class="rcard-meta">Odometer: ${h(log.odometer)} mi</div>`:''}
       ${isAdmin?`<div class="rcard-meta">By: ${h(log.submittedBy)}</div>`:''}
     </div><span class="badge ${bc}">${bt}</span></div>
-    <div class="rcard-body"><div style="font-size:11px;color:var(--ink3);margin-bottom:6px">Crew: ${h((log.crew||[]).join(', ')||'—')}</div>${body}
+    <div class="rcard-body"><div style="font-size:11px;color:var(--ink3);margin-bottom:6px">Crew: ${crewLine(log,isAdmin)}</div>${body}
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px">${acts}</div></div>
   </div>`;
 }
@@ -2663,7 +2703,18 @@ async function approveLog(fid,btn){
     if(btn){btn.disabled=false;btn.textContent='✓ Approve';}
   }
 }
-async function deleteLog(fid){if(!confirm('Delete?'))return;try{await fbDel(`logs/${fid}`);toast('Deleted');buildHistory();}catch(e){}}
+async function deleteLog(fid){
+  if(!confirm('Delete this load sheet? Its notes are kept as a record.'))return;
+  try{
+    await releaseLocks(fid,true);
+    const jobs=await fbQuery(`logs/${fid}/jobs`).catch(()=>[]);
+    await Promise.all(jobs.map(j=>fbDel(`logs/${fid}/jobs/${j.fid}`)));
+    await fbDel(`stockMoves/${fid}`).catch(()=>{});
+    await fbDel(`logs/${fid}`);
+    await writeAuditLog({type:'load_deleted',loadId:fid});
+    toast('Deleted');buildHistory();
+  }catch(e){toast('Could not delete',true);}
+}
 async function openSendModalById(fid){try{const d=await fbGet(`logs/${fid}`);if(d)openSendModal({fid,...d});}catch(e){}}
 async function printLogById(fid){try{const d=await fbGet(`logs/${fid}`);if(d)printLog({fid,...d});}catch(e){}}
 
@@ -2866,7 +2917,9 @@ async function exportAllData(){
       exportDate:new Date().toISOString(),
       exportedBy:session.name,
       app:`${APP.name} v${APP.version} · ${APP.vendor}`,company:CUSTOMER?.name||'',
-      data:{logs,jobs,receipts,boxes,users,materials:MATERIALS,colors:COLORS}
+      data:{logs,jobs:[...jobs,...(await Promise.all(logs.map(l=>fbQuery(`logs/${l.fid}/jobs`).catch(()=>[])))).flat()],
+        notes:(await Promise.all(logs.map(l=>fbQuery(`logs/${l.fid}/notes`).catch(()=>[])))).flat(),
+        receipts,boxes,users,materials:MATERIALS,colors:COLORS}
     };
     const blob=new Blob([JSON.stringify(exportData,null,2)],{type:'application/json'});
     const url=URL.createObjectURL(blob);
@@ -2895,6 +2948,12 @@ async function clearTestData(){
       fbQuery('inventories',orderBy('createdAt','desc')).catch(()=>[]),
       fbQuery('boxes',orderBy('createdAt','desc')).catch(()=>[])
     ]);
+    for(const l of logs){
+      const js=await fbQuery(`logs/${l.fid}/jobs`).catch(()=>[]);
+      await Promise.all(js.map(j=>fbDel(`logs/${l.fid}/jobs/${j.fid}`)));
+      await releaseLocks(l.fid,true).catch(()=>{});
+      await fbDel(`stockMoves/${l.fid}`).catch(()=>{});
+    }
     await Promise.all([
       ...logs.map(l=>fbDel(`logs/${l.fid}`)),
       ...jobs.map(j=>fbDel(`jobs/${j.fid}`)),
@@ -2962,6 +3021,7 @@ async function buildAdminUsers(){
           <div>
             <div style="font-size:13px;font-weight:700">${h(u.name)} <span class="badge badge-${esc(u.role||'crew')}">${h(ROLES[u.role]||u.role)}</span></div>
             <div style="font-size:11px;color:var(--ink3)">${h(u.empId?`ID: ${u.empId}`:u.email||'—')}${u.mustChangePassword?' · waiting for first sign-in':''}</div>
+            ${(u.role==='manager'||u.role==='bigboss')?`<label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;margin-top:4px;color:var(--ink2)"><input type="checkbox" ${u.fieldWorker?'checked':''} ${session.role==='bigboss'?'':'disabled'} onchange="setFieldWorker(${ja(u.fid)},this.checked)" style="width:auto"> Also works in the field</label>`:''}
             ${u.status!=='approved'?`<div style="font-size:11px;color:var(--red);font-weight:700">⚠️ Status "${h(u.status||'missing')}" — fix to "approved" in Firebase</div>`:''}
           </div>
           ${u.fid!==session.uid?`<button class="btn btn-red btn-sm" onclick="removeUser(${ja(u.fid)},${ja(u.name)},${ja(u.empId||'')})">Remove</button>`:'<span style="font-size:11px;color:var(--ink3)">You</span>'}
@@ -2976,11 +3036,16 @@ async function buildAdminUsers(){
   }
 }
 
+async function setFieldWorker(fid,on){
+  if(session?.role!=='bigboss'){toast('Only the Big Boss can change this',true);return;}
+  try{await fbUpdate(`users/${fid}`,{fieldWorker:!!on});await syncPeople();toast(on?'✅ Can be picked for a truck':'Removed from the crew list');}
+  catch(e){toast('Could not save',true);buildAdminUsers();}
+}
 async function approveUser(fid,name){
   try{
     await fbUpdate(`users/${fid}`,{status:'approved',approvedBy:session.name,approvedAt:new Date().toISOString()});
     toast(`✅ ${name} approved — can now log in`);
-    buildAdminUsers();
+    await syncPeople();buildAdminUsers();
   }catch(e){toast('Error approving user',true);}
 }
 
@@ -2994,6 +3059,7 @@ async function releaseUser(fid,empId){
     catch(e){if(e.code!=='not-found')throw e;}
   }
   await writeAuditLog({type:'crew_account_removed',targetUid:fid,empId:empId||''});
+  await syncPeople();
 }
 const LOGIN_NOTE=n=>`\n\nTo reuse this Employee ID for someone else, also delete the login ${n}@${COMPANY.crewDomain} in Firebase Console > Authentication.`;
 async function rejectUser(fid,name,empId){
@@ -3130,32 +3196,263 @@ async function buildPrintSelector(){
   }catch(e){}
 }
 
+// ═══════════════════════ CREW & LOCKS ═════════════════════════════
+// people/{uid}: who can be put on a truck (approved crew + managers marked
+//   "Also works in the field"). Kept by managers' devices, checked by the rules.
+// activeLoad/{uid} and activeTruck/{key}: one open load per person and per
+//   truck. Created together with the load (or the invite), removed at Return.
+//   The rules refuse a second lock, so nobody can start a parallel load.
+// stockMoves/{loadId}: only the quantities of each load, so crew can check
+//   warehouse stock without reading other crews' loads.
+const MAX_CREW=4;
+const truckKey=t=>String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,20);
+let PEOPLE=[],myActive=null,pickedCrew=[],crewModalLoad=null,invitesList=[];
+const newId=()=>{const c='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';const a=new Uint8Array(20);crypto.getRandomValues(a);return Array.from(a,x=>c[x%62]).join('');};
+async function loadPeople(){try{PEOPLE=(await fbQuery('people')).map(p=>({uid:p.fid,name:p.name,role:p.role})).sort((a,b)=>String(a.name).localeCompare(b.name));}catch(e){}return PEOPLE;}
+const personName=uid=>PEOPLE.find(p=>p.uid===uid)?.name||'';
+const memberOf=(l,uid=session?.uid)=>!!l&&(((l.crewUids||[]).includes(uid))||(!l.crewUids&&l.submittedByUid===uid));
+
+// Managers keep the people list in step with the users list.
+async function syncPeople(){
+  if(!isMgrRole())return;
+  try{
+    const[users,people]=await Promise.all([fbQuery('users'),fbQuery('people')]);
+    const want={};users.filter(u=>u.status!=='pending'&&(u.role==='crew'||u.fieldWorker===true)).forEach(u=>want[u.fid]={name:u.name||'',role:u.role});
+    const have={};people.forEach(p=>have[p.fid]=p);
+    // Small batches: the rules look up each user's profile (max 20 lookups per batch).
+    const{db,doc,writeBatch}=fb();const ops=[];
+    Object.entries(want).forEach(([uid,v])=>{const c=have[uid];if(!c||c.name!==v.name||c.role!==v.role)ops.push(b=>b.set(doc(db,'people',uid),v));});
+    Object.keys(have).forEach(uid=>{if(!want[uid])ops.push(b=>b.delete(doc(db,'people',uid)));});
+    for(let i=0;i<ops.length;i+=8){const b=writeBatch(db);ops.slice(i,i+8).forEach(f=>f(b));await b.commit();}
+  }catch(e){console.log('syncPeople',e);}
+}
+// Managers create the stock record of loads saved before v2.3.
+async function syncStockMoves(){
+  if(!isMgrRole())return;
+  try{
+    const[logs,moves]=await Promise.all([fbQuery('logs'),fbQuery('stockMoves')]);
+    const have=new Set(moves.map(m=>m.fid));
+    const{db,doc,writeBatch}=fb();const todo=logs.filter(l=>!have.has(l.fid));
+    for(let i=0;i<todo.length;i+=10){const b=writeBatch(db);todo.slice(i,i+10).forEach(l=>b.set(doc(db,'stockMoves',l.fid),stockMoveOf(l)));await b.commit();}
+  }catch(e){console.log('syncStockMoves',e);}
+}
+const stockMoveOf=l=>({loaded:l.loaded||{},extraMats:l.extraMats||[],used:l.used??null,date:l.date||''});
+
+// Who is busy: activeLoad locks (readable by every approved user).
+async function busyMap(){const m={};try{(await fbQuery('activeLoad')).forEach(x=>m[x.fid]=x);}catch(e){}return m;}
+async function lockProblems(truck,invited){
+  try{
+    const key=truckKey(truck);if(!key)return 'Enter truck number';
+    const[t,busy]=await Promise.all([fbGet(`activeTruck/${key}`),busyMap()]);
+    if(busy[session.uid])return `You are already on an open load (Truck ${busy[session.uid].truck||'?'}). Do the Return first, or ask your manager to release it.`;
+    if(t)return `Truck ${t.truck||truck} already has an open load. Ask your manager if this is a mistake.`;
+    const b=(invited||[]).find(u=>busy[u]);
+    if(b)return `${personName(b)||'A coworker'} is already on Truck ${busy[b].truck||'?'}.`;
+    if((invited||[]).length>MAX_CREW-1)return `Up to ${MAX_CREW} people per truck.`;
+    return '';
+  }catch(e){return 'Cannot check trucks and crew. Check your connection.';}
+}
+async function createLoadWithLocks(load){
+  const id=newId();const{db,doc,writeBatch,serverTimestamp}=fb();const b=writeBatch(db);const at=serverTimestamp();
+  b.set(doc(db,'logs',id),{...load,createdAt:at});
+  [session.uid,...(load.invitedUids||[])].forEach(u=>b.set(doc(db,'activeLoad',u),{loadId:id,truck:load.truck,at}));
+  b.set(doc(db,'activeTruck',load.truckKey),{loadId:id,truck:load.truck,at});
+  b.set(doc(db,'stockMoves',id),stockMoveOf(load));
+  await b.commit();
+  return id;
+}
+// Return: save the used material, update the stock record, remove every lock of this load.
+async function returnLoadAndRelease(fid,update){
+  const{db,doc,writeBatch,where}=fb();
+  const[log,locks,trucks]=await Promise.all([fbGet(`logs/${fid}`),fbQuery('activeLoad',where('loadId','==',fid)),fbQuery('activeTruck',where('loadId','==',fid))]);
+  const b=writeBatch(db);
+  b.update(doc(db,'logs',fid),update);
+  b.set(doc(db,'stockMoves',fid),stockMoveOf({...log,...update}));
+  locks.forEach(x=>b.delete(doc(db,'activeLoad',x.fid)));
+  trucks.forEach(x=>b.delete(doc(db,'activeTruck',x.fid)));
+  await b.commit();
+}
+async function releaseLocks(fid,quiet){
+  if(!isMgrRole())return;
+  if(!quiet&&!confirm('Release this load? The truck and its crew can start a new load. Use it only when a Return was forgotten.'))return;
+  try{
+    const{db,doc,writeBatch,where}=fb();
+    const[locks,trucks]=await Promise.all([fbQuery('activeLoad',where('loadId','==',fid)),fbQuery('activeTruck',where('loadId','==',fid))]);
+    const b=writeBatch(db);locks.forEach(x=>b.delete(doc(db,'activeLoad',x.fid)));trucks.forEach(x=>b.delete(doc(db,'activeTruck',x.fid)));
+    if(locks.length||trucks.length)await b.commit();
+    if(!quiet){await writeAuditLog({type:'load_released',loadId:fid,locks:locks.length+trucks.length});toast('🔓 Released');buildHistory();}
+  }catch(e){if(!quiet)toast('Could not release',true);else throw e;}
+}
+
+// Where am I today? The lock says which load; invitations are loads that list me as invited.
+async function refreshActive(){
+  if(!session||isOffline)return;
+  try{
+    const{where}=fb();
+    const[lock,inv]=await Promise.all([fbGet(`activeLoad/${session.uid}`),fbQuery('logs',where('invitedUids','array-contains',session.uid)).catch(()=>[])]);
+    myActive=lock;invitesList=inv.filter(l=>l.used==null);
+    let log=null;if(lock){try{log=await fbGet(`logs/${lock.loadId}`);}catch(e){}}
+    if(log&&memberOf(log)){todayLoad={fid:lock.loadId,...log};try{localStorage.setItem('dgk_today_load_'+session.uid,JSON.stringify(todayLoad));}catch(e){}}
+    else if(!lock){
+      // Loads saved before v2.3 have no lock: keep the one this device opened today.
+      let legacy=null;try{legacy=JSON.parse(localStorage.getItem('dgk_today_load_'+session.uid)||'null');}catch(e){}
+      todayLoad=legacy&&!legacy.crewUids&&legacy.status==='open'&&new Date(legacy.date).toDateString()===new Date().toDateString()?legacy:null;
+    } else todayLoad=null;
+  }catch(e){console.log('refreshActive',e);}
+  renderInvites();watchCrewNotes();
+}
+function renderInvites(){
+  const box=el('invites');if(!box)return;
+  box.innerHTML=invitesList.map(l=>`<div class="card" style="border:2px solid var(--accent)">
+    <div style="font-weight:800;font-size:15px">👥 ${h(l.submittedBy||'A coworker')} added you to Truck ${h(l.truck||'')}</div>
+    <div style="font-size:13px;color:var(--ink3);margin:4px 0 10px">${h(l.dateDisplay||'')}${l.jobId?' · Job '+h(l.jobId):''}${l.condo?' · Condo '+h(l.condo):''}<br>Crew: ${h((l.crew||[]).join(', ')||'—')}</div>
+    <div style="display:flex;gap:8px"><button class="btn btn-outline btn-sm" style="flex:1" onclick="declineInvite(${ja(l.fid)})">Not me</button>
+    <button class="btn btn-green btn-sm" style="flex:2" onclick="acceptInvite(${ja(l.fid)})">✓ I'm on this truck</button></div></div>`).join('');
+  updateBell();
+  if(!todayLoad&&el('dash-no-load')&&el('dash-load-card')?.style.display==='none')el('dash-no-load').style.display=invitesList.length?'none':'';
+}
+async function acceptInvite(fid){
+  try{
+    const l=await fbGet(`logs/${fid}`);if(!l||!(l.invitedUids||[]).includes(session.uid)){toast('Invitation no longer valid',true);return buildDash();}
+    await fbUpdate(`logs/${fid}`,{crewUids:[...(l.crewUids||[]),session.uid],invitedUids:l.invitedUids.filter(u=>u!==session.uid),crew:[...(l.crew||[]),session.name]});
+    await writeAuditLog({type:'crew_joined',loadId:fid,truck:l.truck||''});
+    toast(`✅ You are on Truck ${l.truck}`);buildDash();
+  }catch(e){console.log('acceptInvite',e);toast('Could not join. Check your connection.',true);}
+}
+async function declineInvite(fid){
+  if(!confirm('You are not on this truck? You will be removed from it.'))return;
+  try{
+    const l=await fbGet(`logs/${fid}`);if(!l)return buildDash();
+    const{db,doc,writeBatch}=fb();const b=writeBatch(db);
+    const names={...(l.crewNames||{})};delete names[session.uid];
+    b.update(doc(db,'logs',fid),{invitedUids:(l.invitedUids||[]).filter(u=>u!==session.uid),crewNames:names});
+    const lock=await fbGet(`activeLoad/${session.uid}`);if(lock&&lock.loadId===fid)b.delete(doc(db,'activeLoad',session.uid));
+    await b.commit();
+    await writeAuditLog({type:'crew_declined',loadId:fid,truck:l.truck||''});
+    toast('Removed');buildDash();
+  }catch(e){console.log('declineInvite',e);toast('Could not save. Check your connection.',true);}
+}
+
+// Morning Load start: blocked while I am on (or invited to) an open load.
+async function buildLoadStart(){
+  const blk=el('load-block');if(!blk)return;blk.innerHTML='';el('ls1').style.display='';
+  if(isOffline)return renderCrewPicker();
+  await refreshActive();
+  const busy=myActive?`You are already on Truck ${h(myActive.truck||'?')}${todayLoad?'':' (waiting for your confirmation on the Dashboard)'}. Do the Return of that load before starting another one.`:'';
+  if(busy){blk.innerHTML=`<div class="alert a-warn"><span class="ai">🚛</span><div>${busy}<div style="margin-top:8px"><button class="btn btn-gold btn-sm" onclick="showScreen('s-dash')">Go to Dashboard</button></div></div></div>`;el('ls1').style.display='none';el('ls2').style.display='none';el('ls3').style.display='none';return;}
+  renderCrewPicker();
+}
+async function renderCrewPicker(){
+  const box=el('crew-picker');if(!box)return;box.innerHTML='<div class="spinner"></div>';
+  const[people,busy]=await Promise.all([loadPeople(),busyMap()]);
+  pickedCrew=pickedCrew.filter(u=>people.some(p=>p.uid===u)&&!busy[u]);
+  const others=people.filter(p=>p.uid!==session.uid);
+  if(!people.some(p=>p.uid===session.uid)){box.innerHTML='<div class="alert a-warn"><span class="ai">⚠️</span><div>Your account is not on the crew list yet. Ask your manager to open the app once (it updates the list) or, for managers, turn on "Also works in the field".</div></div>';return;}
+  box.innerHTML=`<div class="tag-list"><div class="crew-tag" style="background:var(--gold-l);color:var(--gold-d)">${h(session.name)} · you</div></div>
+    <div class="tag-list" style="margin-top:10px">${others.length?others.map(p=>{const b=busy[p.uid],on=pickedCrew.includes(p.uid);
+      return `<button type="button" class="crew-tag" style="cursor:${b?'not-allowed':'pointer'};${on?'background:var(--accent);color:var(--on-accent);border-color:var(--accent)':''};${b?'opacity:.5':''}" ${b?'disabled':''} onclick="toggleCrewPick(${ja(p.uid)})">${on?'✓ ':''}${h(p.name)}${b?` · on Truck ${h(b.truck||'?')}`:''}</button>`;}).join(''):'<span style="font-size:13px;color:var(--ink3)">No other people registered yet.</span>'}</div>`;
+}
+function toggleCrewPick(uid){
+  const i=pickedCrew.indexOf(uid);
+  if(i>=0)pickedCrew.splice(i,1);
+  else{if(pickedCrew.length>=MAX_CREW-1){toast(`Up to ${MAX_CREW} people per truck`,true);return;}pickedCrew.push(uid);}
+  renderCrewPicker();
+}
+
+// Add someone to a load later (crew of the load or manager). The person confirms on their phone.
+async function openCrewModal(fid){
+  if(!fid){toast('Start a Morning Load first',true);return;}
+  crewModalLoad=fid;el('crew-modal').classList.add('open');
+  const box=el('crew-modal-list');box.innerHTML='<div class="spinner"></div>';
+  try{
+    const[l,people,busy]=await Promise.all([fbGet(`logs/${fid}`),loadPeople(),busyMap()]);
+    if(!l){box.innerHTML='Load not found.';return;}
+    const inLoad=new Set([...(l.crewUids||[]),...(l.invitedUids||[])]);
+    const full=inLoad.size>=MAX_CREW;
+    const list=people.filter(p=>!inLoad.has(p.uid));
+    box.innerHTML=full?`<div class="alert a-warn"><span class="ai">⚠️</span><div>This truck already has ${MAX_CREW} people.</div></div>`
+      :list.length?list.map(p=>{const b=busy[p.uid];return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)"><div><strong>${h(p.name)}</strong>${b?`<div style="font-size:12px;color:var(--ink3)">On Truck ${h(b.truck||'?')}</div>`:''}</div>
+        <button class="btn btn-gold btn-sm" ${b&&l.used==null?'disabled':''} onclick="inviteToLoad(${ja(fid)},${ja(p.uid)})">+ Add</button></div>`;}).join('')
+      :'<div style="color:var(--ink3);font-size:14px">Everyone registered is already on this truck.</div>';
+  }catch(e){box.innerHTML='<div class="alert a-err"><span class="ai">⚠️</span><div>Could not load. Check your connection.</div></div>';}
+}
+function closeCrewModal(){el('crew-modal').classList.remove('open');crewModalLoad=null;}
+async function inviteToLoad(fid,uid){
+  try{
+    const l=await fbGet(`logs/${fid}`);if(!l)return;
+    if([...(l.crewUids||[]),...(l.invitedUids||[])].length>=MAX_CREW){toast(`Up to ${MAX_CREW} people per truck`,true);return;}
+    const{db,doc,writeBatch,serverTimestamp}=fb();const b=writeBatch(db);
+    b.update(doc(db,'logs',fid),{invitedUids:[...(l.invitedUids||[]),uid],crewNames:{...(l.crewNames||{}),[uid]:personName(uid)}});
+    if(l.used==null)b.set(doc(db,'activeLoad',uid),{loadId:fid,truck:l.truck||'',at:serverTimestamp()});
+    await b.commit();
+    await writeAuditLog({type:'crew_invited',loadId:fid,truck:l.truck||'',targetUid:uid});
+    toast(`✅ ${personName(uid)} invited. They confirm on their phone.`);
+    closeCrewModal();if(el('s-dash').classList.contains('active'))buildDash();if(el('s-history').classList.contains('active'))buildHistory();
+  }catch(e){console.log('invite',e);toast(e.code==='permission-denied'?'Not allowed: the person may already be on another truck.':'Could not add. Check your connection.',true);}
+}
+// Manager only: take someone off a load.
+async function removeFromLoad(fid,uid){
+  if(!isMgrRole())return;
+  try{
+    const l=await fbGet(`logs/${fid}`);if(!l)return;
+    const nm=l.crewNames?.[uid]||personName(uid)||'this person';
+    if(!confirm(`Remove ${nm} from Truck ${l.truck}?`))return;
+    const{db,doc,writeBatch}=fb();const b=writeBatch(db);
+    const names={...(l.crewNames||{})};delete names[uid];
+    b.update(doc(db,'logs',fid),{crewUids:(l.crewUids||[]).filter(u=>u!==uid),invitedUids:(l.invitedUids||[]).filter(u=>u!==uid),crew:(l.crew||[]).filter(n=>n!==(l.crewNames?.[uid])),crewNames:names});
+    const lock=await fbGet(`activeLoad/${uid}`);if(lock&&lock.loadId===fid)b.delete(doc(db,'activeLoad',uid));
+    await b.commit();
+    await writeAuditLog({type:'crew_removed_from_load',loadId:fid,targetUid:uid,targetName:nm});
+    toast(`${nm} removed`);buildHistory();
+  }catch(e){toast('Could not remove',true);}
+}
+// Crew: loads I am on, plus loads I opened before v2.3.
+async function myLogs(){
+  const{where}=fb();
+  const[a,b]=await Promise.all([fbQuery('logs',where('crewUids','array-contains',session.uid)),fbQuery('logs',where('submittedByUid','==',session.uid)).catch(()=>[])]);
+  const m={};[...a,...b].forEach(l=>m[l.fid]=l);return Object.values(m);
+}
+
 // ═══════════════════════ NOTES ════════════════════════════════════
 // One thread per load (collection "notes", field loadId). Append-only: the
 // security rules allow create and a single "seen" stamp by the recipient,
 // never edit or delete. Crew write change orders and field notes on their own
 // loads; managers write messages to the crew of a load.
 const NOTE_TYPES={change:'Change order',note:'Field note',message:'Message'};
-let notesUnsub=null,notesUnread=[],pendCount=0,noteThreadId=null,noteType='change';
+let notesUnsub=null,crewNotesUnsub=null,invUnsub=null,crewNotesFor=null,notesUnread=[],pendCount=0,noteThreadId=null,noteType='change';
 const isMgrRole=()=>session&&(session.role==='manager'||session.role==='bigboss');
 const tsDate=v=>v&&typeof v.toDate==='function'?v.toDate():(v?new Date(v):new Date());
 const fmtTs=v=>{const d=tsDate(v);return isNaN(d)?'—':d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});};
 
+// Managers: mgrInbox holds one entry per unread crew note.
+// Crew: unread office messages on the load they are on now, and invitations.
 function startNotesWatch(){
   stopNotesWatch();
   if(!session)return;
   try{
     const{db,collection,query,where,onSnapshot}=fb();
-    const q=isMgrRole()
-      ?query(collection(db,'notes'),where('to','==','manager'),where('seenAt','==',null))
-      :query(collection(db,'notes'),where('crewUid','==',session.uid),where('to','==','crew'),where('seenAt','==',null));
-    notesUnsub=onSnapshot(q,snap=>{
-      notesUnread=snap.docs.map(d=>({fid:d.id,...d.data()}));
-      renderNotesBadges();
-    },err=>console.log('notes watch:',err));
+    if(isMgrRole()){
+      notesUnsub=onSnapshot(collection(db,'mgrInbox'),snap=>{notesUnread=snap.docs.map(d=>({fid:d.id,...d.data()}));renderNotesBadges();},err=>console.log('inbox watch:',err));
+    }
+    invUnsub=onSnapshot(query(collection(db,'logs'),where('invitedUids','array-contains',session.uid)),snap=>{
+      invitesList=snap.docs.map(d=>({fid:d.id,...d.data()})).filter(l=>l.used==null);renderInvites();
+    },err=>console.log('invite watch:',err));
   }catch(e){console.log('notes watch:',e);}
 }
-function stopNotesWatch(){try{if(notesUnsub)notesUnsub();}catch(e){}notesUnsub=null;notesUnread=[];pendCount=0;renderNotesBadges();}
+function watchCrewNotes(){
+  if(!session||isMgrRole())return;
+  const id=todayLoad&&memberOf(todayLoad)?todayLoad.fid:null;
+  if(id===crewNotesFor)return;
+  try{if(crewNotesUnsub)crewNotesUnsub();}catch(e){}crewNotesUnsub=null;crewNotesFor=id;notesUnread=[];renderNotesBadges();
+  if(!id)return;
+  try{
+    const{db,collection,query,where,onSnapshot}=fb();
+    crewNotesUnsub=onSnapshot(query(collection(db,`logs/${id}/notes`),where('to','==','crew'),where('seenAt','==',null)),snap=>{
+      notesUnread=snap.docs.map(d=>({fid:d.id,loadId:id,...d.data()}));renderNotesBadges();
+    },err=>console.log('crew notes watch:',err));
+  }catch(e){console.log('crew notes watch:',e);}
+}
+function stopNotesWatch(){[notesUnsub,crewNotesUnsub,invUnsub].forEach(u=>{try{if(u)u();}catch(e){}});notesUnsub=crewNotesUnsub=invUnsub=null;crewNotesFor=null;notesUnread=[];invitesList=[];pendCount=0;renderNotesBadges();}
 function renderNotesBadges(){
   const n=notesUnread.length,b=el('notes-badge');
   if(b){b.textContent=n;b.style.display=n?'inline-flex':'none';}
@@ -3172,18 +3469,15 @@ function renderNotesBadges(){
 }
 function updateBell(){
   const bell=el('bell-btn'),bc=el('bell-count');if(!bell)return;
-  const total=(isMgrRole()?pendCount:0)+notesUnread.length;
-  bell.style.display=session&&(isMgrRole()||notesUnread.length)?'flex':'none';
+  const total=(isMgrRole()?pendCount:0)+notesUnread.length+invitesList.length;
+  bell.style.display=session&&(isMgrRole()||total)?'flex':'none';
   bc.textContent=total;bc.style.display=total?'flex':'none';
 }
-function bellClick(){if(notesUnread.length)openNotes(notesUnread[0].loadId);else showScreen('s-admin');}
+function bellClick(){if(invitesList.length)showScreen('s-dash');else if(notesUnread.length)openNotes(notesUnread[0].loadId);else showScreen('s-admin');}
 
 async function fetchNotes(loadId){
   if(!loadId||!session)return[];
-  const{where}=fb();
-  const rows=isMgrRole()
-    ?await fbQuery('notes',where('loadId','==',loadId))
-    :await fbQuery('notes',where('loadId','==',loadId),where('crewUid','==',session.uid));
+  const rows=await fbQuery(`logs/${loadId}/notes`);
   return rows.sort((a,b)=>tsDate(a.createdAt)-tsDate(b.createdAt));
 }
 
@@ -3192,7 +3486,7 @@ async function buildNotesIndex(){
   const box=el('notes-index');box.style.display='';box.innerHTML='<div class="spinner"></div>';
   try{
     const{where}=fb();
-    let logs=isMgrRole()?await fbQuery('logs'):await fbQuery('logs',where('submittedByUid','==',session.uid));
+    let logs=isMgrRole()?await fbQuery('logs'):await myLogs();
     logs=byNewest(logs,'date').slice(0,40);
     const unreadBy={};notesUnread.forEach(x=>{unreadBy[x.loadId]=(unreadBy[x.loadId]||0)+1;});
     if(!logs.length){box.innerHTML=isMgrRole()
@@ -3241,7 +3535,7 @@ function renderThread(loadId,log,notes){
       <div style="font-size:13px;margin-top:8px;opacity:.8">Crew: ${h((log.crew||[]).join(', ')||'—')} · By ${h(log.submittedBy||'')}</div></div>`
     :'<div class="alert a-warn" style="margin-top:10px"><span class="ai">⚠️</span><div>This load was deleted. Its notes are kept as a record.</div></div>';
   const list=notes.length?notes.map(noteCard).join(''):'<div style="color:var(--ink3);font-size:14px;padding:14px 0;text-align:center">No notes on this load yet.</div>';
-  const canWrite=!!log;
+  const canWrite=!!log&&(isMgrRole()||memberOf(log));
   const compose=!canWrite?'':isMgrRole()
     ?`<div class="card"><label for="note-text">Message to the crew of truck ${h(log.truck||'')}</label>
        <textarea id="note-text" rows="3" maxlength="1000" placeholder="e.g. Building 4 needs 2 extra downspouts on the back side."></textarea>
@@ -3282,20 +3576,30 @@ async function sendNote(){
   try{
     const log=await fbGet(`logs/${id}`);
     if(!log){toast('Load not found',true);return;}
-    const data={loadId:id,crewUid:log.submittedByUid||'',truck:log.truck||'',type,text:text.slice(0,1000),
+    const{db,doc,writeBatch,serverTimestamp}=fb();const nid=newId(),at=serverTimestamp();
+    const data={loadId:id,truck:log.truck||'',type,text:text.slice(0,1000),
       authorUid:session.uid,authorName:session.name,authorRole:session.role,
-      to:type==='message'?'crew':'manager',seenAt:null,seenBy:null,seenByUid:null};
+      to:type==='message'?'crew':'manager',seenAt:null,seenBy:null,seenByUid:null,createdAt:at};
     if(type==='change')data.requestedBy=requestedBy.slice(0,80);
-    await fbAdd('notes',data);
+    const b=writeBatch(db);
+    b.set(doc(db,'logs',id,'notes',nid),data);
+    if(data.to==='manager')b.set(doc(db,'mgrInbox',nid),{loadId:id,truck:data.truck,type,at});
+    await b.commit();
     writeAuditLog({type:'note_'+type,loadId:id});
     toast(type==='message'?'✅ Message sent':'✅ Saved');
     openNotesKeep('','');
   }catch(e){console.log('sendNote',e);toast('Could not save the note',true);if(btn){btn.disabled=false;btn.textContent='Try again';}}
 }
 async function markSeen(notes){
-  const mine=notes.filter(n=>!n.seenAt&&n.authorUid!==session.uid&&((n.to==='crew'&&!isMgrRole()&&n.crewUid===session.uid)||(n.to==='manager'&&isMgrRole())));
+  const mine=notes.filter(n=>!n.seenAt&&n.authorUid!==session.uid&&((n.to==='crew'&&!isMgrRole())||(n.to==='manager'&&isMgrRole())));
+  const{db,doc,writeBatch,serverTimestamp}=fb();
   for(const n of mine){
-    try{await fbUpdate(`notes/${n.fid}`,{seenAt:fb().serverTimestamp(),seenBy:session.name,seenByUid:session.uid});}catch(e){console.log('markSeen',e);}
+    try{
+      const b=writeBatch(db);
+      b.update(doc(db,'logs',n.loadId,'notes',n.fid),{seenAt:serverTimestamp(),seenBy:session.name,seenByUid:session.uid});
+      if(n.to==='manager')b.delete(doc(db,'mgrInbox',n.fid));
+      await b.commit();
+    }catch(e){console.log('markSeen',e);}
   }
 }
 function notesPrintHtml(notes){
@@ -3340,7 +3644,8 @@ function printCredit(docNo,page,pages){
 
 async function printLog(log){
   let jobs=[];
-  try{const{where}=fb();jobs=await fbQuery('jobs',where('loadId','==',log.fid));}catch(e){}
+  try{jobs=await fbQuery(`logs/${log.fid}/jobs`);}catch(e){}
+  if(!jobs.length&&isMgrRole()){try{const{where}=fb();jobs=await fbQuery('jobs',where('loadId','==',log.fid));}catch(e){}}
 
   // Use dynamic colors from loaded data — not log.colors
   let notes=[];try{notes=await fetchNotes(log.fid);}catch(e){}
@@ -3374,7 +3679,7 @@ async function printLog(log){
       });
     }
     pageList.push((n,total)=>`<div class="print-page">
-      ${printHeader('Daily Load Sheet',`<strong>Truck ${h(log.truck)}</strong>Doc: ${h(docNo)}<br>Odometer: ${h(log.odometer||'—')} mi<br>Job ID: ${h(log.jobId||'—')}<br>Address: ${h(log.job||'—')}<br>Loaded: ${h(log.dateDisplay)}${log.jobDateDisplay&&log.jobDateDisplay!==log.dateDisplay?`<br>Job: ${h(log.jobDateDisplay)}`:''}<br>Crew: ${h((log.crew||[]).join(', ')||'—')}<br>By: ${h(log.submittedBy)}`)}
+      ${printHeader('Daily Load Sheet',`<strong>Truck ${h(log.truck)}</strong>Doc: ${h(docNo)}<br>Odometer: ${h(log.odometer||'—')} mi<br>Job ID: ${h(log.jobId||'—')}<br>Address: ${h(log.job||'—')}${log.condo?`<br>Condo: ${h(log.condo)}`:''}<br>Loaded: ${h(log.dateDisplay)}${log.jobDateDisplay&&log.jobDateDisplay!==log.dateDisplay?`<br>Job: ${h(log.jobDateDisplay)}`:''}<br>Crew: ${h((log.crew||[]).join(', ')||'—')}<br>By: ${h(log.submittedBy)}`)}
       <div class="print-section-title">Color: ${h(c)}</div>
       <table class="ptbl">
         <tr><th>Material</th><th>Unit</th><th>Out</th><th>Used</th><th>Return</th></tr>
@@ -3402,6 +3707,7 @@ function buildReportText(log){
   if(log.odometer)t+=`\nOdometer: ${log.odometer} mi`;
   if(log.jobId)t+=`\nJob ID: ${log.jobId}`;
   if(log.job)t+=`\nAddress: ${log.job}`;
+  if(log.condo)t+=`\nCondo: ${log.condo}`;
   t+=`\nCrew: ${(log.crew||[]).join(', ')||'—'}\nBy: ${log.submittedBy}\n\n`;
   (log.colors||[]).forEach(c=>{
     const items=MATERIALS.filter(m=>(log.loaded?.[c]?.[m.id]||0)>0);if(!items.length)return;
