@@ -551,6 +551,7 @@ body.fp-open .app-foot{display:none}
         <div><div style="font-size:10px;opacity:.6;text-transform:uppercase">Jobs Today</div><div style="font-size:22px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--accent)" id="dash-jobs-count">0</div></div>
       </div>
     </div>
+    <div id="dash-fp"></div>
 
     <!-- Jobs list -->
     <div class="sec-label">Jobs Today</div>
@@ -595,6 +596,7 @@ body.fp-open .app-foot{display:none}
       <div class="sec-label">Job Info</div>
       <label>Job ID / Work Order Number</label>
       <input type="text" id="job-id" placeholder="e.g. WO-2024-001">
+      <div id="job-id-fp" style="display:none;font-size:12px;color:var(--ink3);margin:-4px 0 8px">If this work order is a Field Proof job, its plan opens for your crew on the Dashboard.</div>
       <label>Condo Number</label>
       <input type="text" id="condo" placeholder="e.g. Bldg 12 / Unit 204" maxlength="40">
       <label>Job Address</label>
@@ -1152,7 +1154,7 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // Firestore document config/company, which only 29 Cyber edits, in the
 // Firebase console (the security rules block every write from the app).
 // No document = the app and its printed sheets show the 29 Cyber brand.
-const APP={name:'29Cyber CrewTrack',version:'2.4.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'2.5.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
   crewDomain:'crew.dgk.internal'   // crew sign-in: <Employee ID>@<crewDomain>
 };
@@ -1529,6 +1531,7 @@ async function _afterLogin(user){
     }
     session={uid:user.uid,...profile};
     el('fp-link').style.display=hasApp(profile,'fieldproof')?'flex':'none';
+    if(el('job-id-fp'))el('job-id-fp').style.display=hasApp(profile,'fieldproof')?'':'none';
     el('tb-name').textContent=session.name;
     el('tb-role').textContent=ROLES[session.role]||session.role;
     document.body.classList.add('authed');
@@ -1933,6 +1936,8 @@ async function confirmLoad(){
     }
     const ref={id:await createLoadWithLocks(todayLoad)};
     todayLoad.fid=ref.id;pickedCrew=[];
+    // The work order typed above opens the Field Proof job plan, when there is one.
+    if(todayLoad.jobId&&hasApp(session,'fieldproof')){try{if(await fpWoLinkOn()){const r=await linkWo(ref.id,todayLoad.jobId,todayLoad.truck);if(r.ok)toast('📋 Field Proof job plan linked: open it from the Dashboard');}}catch(e){console.log('fp link',e)}}
     extraMats=[];
     localStorage.setItem('dgk_today_load_'+session.uid,JSON.stringify(todayLoad));
     // Audit log — load confirmed
@@ -2100,7 +2105,45 @@ async function buildDash(){
     </div>`).join(''):'';
   // Show return button if at least 1 job closed
   el('dash-return-btn').style.display=todayJobs.length>0?'':'none';
+  renderDashFp();
 }
+
+// ═══════════════════════ FIELD PROOF JOB PLAN (v2.5) ═══════════════
+// A load is linked to a Field Proof job by its work order number. The link
+// opens the job plan to the confirmed crew of the load until the Return.
+let FP_WOLINK=true;
+const woKeyOf=w=>String(w||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+async function fpWoLinkOn(){try{const c=await fbGet('config/fieldproof');FP_WOLINK=!c||c.woLink!==false}catch(e){FP_WOLINK=true}return FP_WOLINK}
+async function linkWo(loadId,wo,truck){
+  const w0=String(wo||'').trim().slice(0,40),k=woKeyOf(w0);if(!k)return{ok:false,msg:'Type the work order number.'};
+  try{
+    const w=await fbGet(`fpWo/${k}`);if(!w)return{ok:false,msg:'Work order not found in Field Proof.'};
+    await fbSet(`fpLinks/${loadId}`,{siteId:w.siteId,wo:w0,loadId,truck,byUid:session.uid,byName:session.name,at:fb().serverTimestamp()});
+    await writeAuditLog({type:'fp_wo_linked',loadId,wo:w0}).catch(()=>{});
+    return{ok:true,siteId:w.siteId};
+  }catch(e){console.log('linkWo',e);return{ok:false,msg:e&&e.code==='permission-denied'?'This work order cannot be opened (job closed, link turned off, or already linked).':'Could not link. Check your connection.'}}
+}
+async function renderDashFp(){
+  const box=el('dash-fp');if(!box)return;box.innerHTML='';
+  if(!todayLoad||!todayLoad.fid||!hasApp(session,'fieldproof')||isOffline)return;
+  let lk=null;try{lk=await fbGet(`fpLinks/${todayLoad.fid}`)}catch(e){}
+  if(lk&&lk.revoked){box.innerHTML=`<div class="card"><div style="font-size:13px;color:var(--ink3)">Field Proof job (work order ${h(lk.wo)}) was removed from this load by ${h(lk.revokedBy||'the office')}. Ask your manager to assign you to the job.</div></div>`;return}
+  if(lk){box.innerHTML=`<div class="card" style="border:2px solid var(--accent)"><div style="font-size:11px;color:var(--ink3);text-transform:uppercase;letter-spacing:.5px">Field Proof job</div>
+    <div style="font-weight:800;font-size:16px;margin:2px 0 10px">Work order ${h(lk.wo)}</div>
+    <button class="btn btn-gold btn-full" onclick="openJobPlan(${ja(lk.siteId)})"><i class="ti ti-clipboard-check"></i> Open job plan</button></div>`;return}
+  if(!(todayLoad.crewUids||[]).includes(session.uid)||todayLoad.used!=null||!(await fpWoLinkOn()))return;
+  box.innerHTML=`<div class="card"><div class="sec-label" style="margin-top:0">Field Proof job plan</div>
+    <div style="font-size:13px;color:var(--ink3);margin-bottom:8px">Type the work order number to open the plan drawn by the site supervisor.</div>
+    <div style="display:flex;gap:8px;align-items:center"><input type="text" id="fp-wo" maxlength="40" placeholder="Work order" value="${h(todayLoad.jobId||'')}" style="flex:1;margin:0" aria-label="Work order number">
+    <button class="btn btn-gold" onclick="dashLinkWo()">Open</button></div><div id="fp-wo-msg" role="status" style="font-size:13px;color:var(--red);margin-top:6px"></div></div>`;
+}
+async function dashLinkWo(){
+  const v=(el('fp-wo')?.value||'').trim(),m=el('fp-wo-msg');if(m)m.textContent='Checking…';
+  const r=await linkWo(todayLoad.fid,v,todayLoad.truck);
+  if(!r.ok){if(m)m.textContent=r.msg;return}
+  toast('✅ Job plan linked to your load');await renderDashFp();openJobPlan(r.siteId);
+}
+function openJobPlan(id){showScreen('s-fieldproof');const f=el('fp-frame');if(f)f.setAttribute('src','fieldproof/index.html?embed=1#site='+encodeURIComponent(id));}
 
 // ═══════════════════════ JOB MODAL ═══════════════════════════════
 function openJobModal(){
