@@ -526,6 +526,7 @@ body.fp-open .app-foot{display:none}
       <div class="panel"><div class="panel-h"><div class="panel-t">Trucks today</div><div class="panel-s" id="mgr-trucks-n"></div></div><div id="mgr-trucks"></div></div>
     </div>
     <div class="panel" style="margin-bottom:14px"><div class="panel-h"><div class="panel-t">Recent loads</div><button class="btn btn-outline btn-sm" onclick="showScreen('s-history')">View all</button></div><div class="tbl-wrap" id="mgr-recent"></div></div>
+    <div class="panel" style="margin-bottom:14px" id="mgr-issues-panel"><div class="panel-h"><div class="panel-t">Truck problems</div><button class="btn btn-outline btn-sm" onclick="showScreen('s-admin');adminTab('trucks')">Trucks</button></div><div id="mgr-issues"></div></div>
     <div class="sec-label">Your load</div>
   </div>
 
@@ -550,6 +551,11 @@ body.fp-open .app-foot{display:none}
         <div><div style="font-size:10px;opacity:.6;text-transform:uppercase">Crew</div><div style="font-size:13px;font-weight:600;margin-top:2px" id="dash-crew">—</div></div>
         <div><div style="font-size:10px;opacity:.6;text-transform:uppercase">Jobs Today</div><div style="font-size:22px;font-weight:800;font-family:'JetBrains Mono',monospace;color:var(--accent)" id="dash-jobs-count">0</div></div>
       </div>
+    </div>
+    <div id="dash-truck-issues"></div>
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <button class="btn btn-outline" style="flex:1" onclick="openIssueModal()"><i class="ti ti-alert-triangle"></i> Truck problem</button>
+      <button class="btn btn-outline" style="flex:1" onclick="openFuelModal()"><i class="ti ti-gas-station"></i> Fuel</button>
     </div>
     <div id="dash-fp"></div>
 
@@ -583,8 +589,9 @@ body.fp-open .app-foot{display:none}
   <div id="ls1">
     <div class="card">
       <div class="sec-label">Truck Info</div>
-      <label>Truck Number</label>
-      <input type="text" id="truck" placeholder="e.g. T-01">
+      <label>Truck</label>
+      <select id="truck" onchange="truckPicked()"><option value="">Loading trucks…</option></select>
+      <div id="truck-hint" style="font-size:12px;color:var(--ink3);margin:-4px 0 8px"></div>
       <label>Odometer (miles)</label>
       <input type="number" id="odometer" placeholder="e.g. 45230" min="0" inputmode="numeric">
       <label>Load Date (today — locked)</label>
@@ -791,6 +798,11 @@ body.fp-open .app-foot{display:none}
         <div class="alert a-warn"><span class="ai">⚠️</span><div id="ret-pending-boxes-msg"></div></div>
       </div>
 
+      <div class="card" style="margin-top:12px">
+        <label style="margin-top:0">Odometer at return (miles)</label>
+        <input type="number" id="ret-odo" min="0" inputmode="numeric" placeholder="e.g. 45310">
+        <div id="ret-odo-hint" style="font-size:12px;color:var(--ink3)"></div>
+      </div>
       <button class="btn btn-green btn-full" style="margin-top:12px" onclick="closeReturnDay()">✓ Close Day & Generate Report</button>
     </div>
   </div>
@@ -870,10 +882,25 @@ body.fp-open .app-foot{display:none}
       <button class="btn btn-sm btn-outline" id="at-ids" onclick="adminTab('ids')">🪪 IDs</button>
       <button class="btn btn-sm btn-outline" id="at-mats" onclick="adminTab('mats')">🔩 Materials</button>
       <button class="btn btn-sm btn-outline" id="at-boxes" onclick="adminTab('boxes')">📦 Boxes</button>
+      <button class="btn btn-sm btn-outline" id="at-trucks" onclick="adminTab('trucks')">🚚 Trucks</button>
       <button class="btn btn-sm btn-outline" id="at-print" onclick="adminTab('print')">🖨️ Print</button>
       <button class="btn btn-sm" id="at-security" onclick="adminTab('security')" style="background:var(--red-l);color:var(--red);border-color:var(--red);border:1.5px solid">🔒 Security</button>
     </div>
     <div id="admin-sheets-view"><div id="admin-sheets-list"></div></div>
+    <div id="admin-trucks-view" style="display:none">
+      <div class="card">
+        <div style="font-size:13px;font-weight:700;margin-bottom:4px">Add truck</div>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">Crews can only start a Morning Load on a registered, active truck.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div><label>Truck number</label><input type="text" id="tk-num" maxlength="20" placeholder="T-01"></div>
+          <div><label>Plate (optional)</label><input type="text" id="tk-plate" maxlength="20" placeholder="ABC1234"></div>
+        </div>
+        <div id="tk-err" style="font-size:13px;color:var(--red);margin-top:6px"></div>
+        <button class="btn btn-gold btn-full" style="margin-top:10px" onclick="addTruck()">+ Add truck</button>
+      </div>
+      <div id="trucks-import"></div>
+      <div id="trucks-list"></div>
+    </div>
     <div id="admin-users-view" style="display:none">
       <div class="sec-label">Active Users</div><div id="users-active" class="card"></div>
       <div class="card">
@@ -1017,6 +1044,45 @@ body.fp-open .app-foot{display:none}
 </div>
 
 <!-- ══ SEND MODAL ═════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="issue-modal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">⚠️ Truck problem</div>
+    <div style="font-size:13px;color:var(--ink3);margin-bottom:10px" id="issue-truck"></div>
+    <label>What is wrong?</label>
+    <select id="issue-type"><option value="tires">Tires</option><option value="brakes">Brakes</option><option value="lights">Lights</option><option value="engine">Engine</option><option value="body">Body / damage</option><option value="other">Other</option></select>
+    <label>How serious?</label>
+    <select id="issue-sev"><option value="low">Low: can wait</option><option value="medium">Medium: fix soon</option><option value="high">High: unsafe or urgent</option></select>
+    <label>Details</label>
+    <textarea id="issue-note" rows="3" maxlength="1000" placeholder="e.g. Rear left tire low, lost air overnight"></textarea>
+    <label>Photo (optional)</label>
+    <input type="file" id="issue-photo" accept="image/*" capture="environment">
+    <div id="issue-err" style="font-size:13px;color:var(--red);margin-top:6px"></div>
+    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-outline" style="flex:1" onclick="closeModal('issue-modal')">Cancel</button><button class="btn btn-gold" style="flex:2" id="issue-save" onclick="saveIssue()">Send to manager</button></div>
+  </div>
+</div>
+<div class="modal-overlay" id="fuel-modal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">⛽ Fuel</div>
+    <div style="font-size:13px;color:var(--ink3);margin-bottom:10px" id="fuel-truck"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div><label>Gallons</label><input type="number" id="fuel-gal" min="0" step="0.01" inputmode="decimal" placeholder="22.5"></div>
+      <div><label>Total ($)</label><input type="number" id="fuel-amt" min="0" step="0.01" inputmode="decimal" placeholder="81.40"></div>
+    </div>
+    <label>Odometer (miles)</label><input type="number" id="fuel-odo" min="0" inputmode="numeric">
+    <label>Note (optional)</label><input type="text" id="fuel-note" maxlength="300" placeholder="Station, card used…">
+    <label>Receipt photo (optional)</label><input type="file" id="fuel-photo" accept="image/*" capture="environment">
+    <div id="fuel-err" style="font-size:13px;color:var(--red);margin-top:6px"></div>
+    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-outline" style="flex:1" onclick="closeModal('fuel-modal')">Cancel</button><button class="btn btn-gold" style="flex:2" id="fuel-save" onclick="saveFuel()">Save</button></div>
+  </div>
+</div>
+<div class="modal-overlay" id="photo-modal" onclick="if(event.target===this)closeModal('photo-modal')">
+  <div class="modal"><div class="modal-handle"></div><div class="modal-title" id="photo-modal-t">Photo</div>
+    <div id="photo-modal-body"><div class="spinner"></div></div>
+    <button class="btn btn-outline btn-full" style="margin-top:12px" onclick="closeModal('photo-modal')">Close</button></div>
+</div>
+
 <div class="modal-overlay" id="crew-modal">
   <div class="modal">
     <div class="modal-handle"></div>
@@ -1154,7 +1220,7 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // Firestore document config/company, which only 29 Cyber edits, in the
 // Firebase console (the security rules block every write from the app).
 // No document = the app and its printed sheets show the 29 Cyber brand.
-const APP={name:'29Cyber CrewTrack',version:'2.5.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'2.6.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
   crewDomain:'crew.dgk.internal'   // crew sign-in: <Employee ID>@<crewDomain>
 };
@@ -1640,7 +1706,8 @@ function setSteps(a){['st1','st2','st3'].forEach((s,i)=>el(s).className='step'+(
 function goLS1(){el('ls1').style.display='';el('ls2').style.display='none';el('ls3').style.display='none';setSteps(0);}
 // keep=true when coming back from Review: the materials already added stay.
 async function goLS2(keep=false){
-  if(!el('truck').value.trim()){toast('Enter truck number',true);return;}
+  if(!el('truck').value.trim()){toast('Choose the truck',true);return;}
+  const odoV=el('odometer').value.trim();if(odoV===''||!(Number(odoV)>=0)){toast('Enter the odometer',true);return;}
   if(!keep){const msg=await lockProblems(el('truck').value,pickedCrew);if(msg){toast(msg,true);return;}}
   el('ls1').style.display='none';el('ls2').style.display='';el('ls3').style.display='none';setSteps(1);
   pendingScanBox=null;
@@ -1915,7 +1982,7 @@ async function confirmLoad(){
     date:new Date().toISOString(),dateDisplay:today(),
     jobDate:jd,jobDateDisplay:jdDisplay,
     truck:el('truck').value,
-    odometer:parseFloat(el('odometer').value)||0,
+    odometer:Number(el('odometer').value)||0,
     jobId:el('job-id').value.trim(),
     job:el('job').value.trim(),
     condo:el('condo').value.trim().slice(0,40),
@@ -2028,7 +2095,7 @@ async function buildMgrDash(){
     const fmtD=d=>{const t=new Date(d);return isNaN(t)?'—':t.toLocaleDateString('en-US',{month:'short',day:'numeric'});};
     el('mgr-recent').innerHTML=recent.length?`<table class="dtbl"><tr><th>Date</th><th>Truck</th><th>Job ID</th><th>By</th><th>Status</th></tr>${recent.map(l=>`<tr class="click" onclick="showScreen('s-history')"><td>${fmtD(l.date)}</td><td style="font-weight:700">${h(l.truck||'—')}</td><td>${h(l.jobId||'—')}</td><td>${h(l.submittedBy||'—')}</td><td>${statusChip(l)}</td></tr>`).join('')}</table>`
       :'<div style="color:var(--ink3);font-size:14px;padding:10px 0">No loads yet.</div>';
-    pendCount=pendLoads+pendUsers;updateBell();
+    pendCount=pendLoads+pendUsers;await renderMgrIssues();updateBell();
   }catch(e){k.innerHTML='<div class="alert a-err" style="grid-column:1/-1"><span class="ai">⚠️</span><div>Could not load the overview. Check your connection.</div></div>';}
 }
 // Same stock math as the Stock screen: receipts in, loads out, returns back in.
@@ -2104,6 +2171,7 @@ async function buildDash(){
   // Show return button if at least 1 job closed
   el('dash-return-btn').style.display=todayJobs.length>0?'':'none';
   renderDashFp();
+  renderDashTruckIssues();
 }
 
 // ═══════════════════════ FIELD PROOF JOB PLAN (v2.5) ═══════════════
@@ -2144,6 +2212,140 @@ async function dashLinkWo(){
   if(!r.ok){if(m)m.textContent=r.msg;return}
   toast('✅ Job plan linked to your load');await renderDashFp();openJobPlan(r.siteId);
 }
+// ═══════════════════════ TRUCKS · PACOTE B (v2.6) ═══════════════
+// Registered trucks, odometer, truck problems (alert to managers), fuel.
+let TRUCKS=[],openIssues=[];
+const ISSUE_T={tires:'Tires',brakes:'Brakes',lights:'Lights',engine:'Engine',body:'Body / damage',other:'Other'};
+const SEV={low:['Low','badge-closed'],medium:['Medium','badge-pending'],high:['High','badge-away']};
+const odoText=l=>{const a=Number(l.odometer)||0,b=l.odometerEnd!=null?Number(l.odometerEnd):null;return b!=null?`${a} → ${b} mi (${Math.max(0,b-a)} mi)`:`${a||'—'} mi`;};
+function closeModal(id){el(id)?.classList.remove('open');}
+async function loadTrucks(){try{TRUCKS=(await fbQuery('trucks')).map(t=>({key:t.fid,...t})).sort((a,b)=>String(a.number).localeCompare(String(b.number),undefined,{numeric:true}));}catch(e){console.log('trucks',e);TRUCKS=[];}return TRUCKS;}
+async function fillTruckSelect(){
+  const s=el('truck');if(!s)return;const cur=s.value;await loadTrucks();const act=TRUCKS.filter(t=>t.active);
+  s.innerHTML=act.length?`<option value="">Choose the truck</option>`+act.map(t=>`<option value="${h(t.number)}">${h(t.number)}${t.plate?' · '+h(t.plate):''}</option>`).join(''):`<option value="">No trucks registered</option>`;
+  if(act.some(t=>t.number===cur))s.value=cur;
+  truckPicked();
+  if(!act.length)el('truck-hint').textContent='No trucks registered yet. A manager adds them in Admin › Trucks.';
+}
+async function truckPicked(){
+  const hint=el('truck-hint');if(!hint)return;hint.textContent='';const n=el('truck').value;if(!n)return;
+  try{const{where}=fb();const iss=(await fbQuery('truckIssues',where('truckKey','==',truckKey(n)),where('status','==','open')));
+    if(el('truck').value===n&&iss.length)hint.innerHTML=`<span style="color:var(--red);font-weight:700">⚠️ Open problem${iss.length>1?'s':''}: ${iss.map(i=>h(ISSUE_T[i.type]||i.type)+' ('+h(SEV[i.severity]?.[0]||i.severity)+')').join(', ')}</span>`;}catch(e){}
+}
+async function compressJpeg(file){
+  const url=URL.createObjectURL(file);
+  try{const im=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=url;});let m=1280,q=0.72,data,w,hh;
+    for(let k=0;k<6;k++){const r=Math.min(1,m/Math.max(im.naturalWidth,im.naturalHeight));w=Math.round(im.naturalWidth*r);hh=Math.round(im.naturalHeight*r);const c=document.createElement('canvas');c.width=w;c.height=hh;c.getContext('2d').drawImage(im,0,0,w,hh);data=c.toDataURL('image/jpeg',q);if(data.length<850000)break;m=Math.round(m*0.8);q=Math.max(0.5,q-0.06);}
+    return{data,w,h:hh};}finally{URL.revokeObjectURL(url);}
+}
+async function savePhotoFrom(inputId){
+  const f=el(inputId)?.files?.[0];if(!f)return '';
+  const{data,w,h:hh}=await compressJpeg(f),id=newId();
+  await fbSet(`ctPhotos/${id}`,{data,w,h:hh,authorUid:session.uid,createdAt:fb().serverTimestamp()});return id;
+}
+async function showCtPhoto(id,title){
+  el('photo-modal-t').textContent=title||'Photo';el('photo-modal-body').innerHTML='<div class="spinner"></div>';el('photo-modal').classList.add('open');
+  try{const p=await fbGet(`ctPhotos/${id}`);el('photo-modal-body').innerHTML=p&&/^data:image\/jpeg;base64,/.test(p.data)?`<img src="${p.data}" alt="" style="width:100%;border-radius:10px">`:'Photo not found.';}
+  catch(e){el('photo-modal-body').textContent='Could not load the photo.';}
+}
+function curTruck(){if(!todayLoad||!todayLoad.truck)return null;return{number:todayLoad.truck,key:todayLoad.truckKey||truckKey(todayLoad.truck)};}
+function openIssueModal(){const t=curTruck();if(!t){toast('Start a Morning Load first',true);return;}
+  el('issue-truck').textContent=`Truck ${t.number}. Your manager gets an alert.`;el('issue-type').value='tires';el('issue-sev').value='medium';el('issue-note').value='';el('issue-photo').value='';el('issue-err').textContent='';
+  el('issue-modal').classList.add('open');}
+async function saveIssue(){
+  const t=curTruck(),type=el('issue-type').value,sev=el('issue-sev').value,note=el('issue-note').value.trim().slice(0,1000),err=el('issue-err');
+  if(type==='other'&&!note){err.textContent='Describe the problem.';return;}
+  if(isOffline){err.textContent='You are offline. Try again when you have signal.';return;}
+  const b=el('issue-save');b.disabled=true;b.textContent='Sending…';
+  try{const photoId=await savePhotoFrom('issue-photo');
+    await fbSet(`truckIssues/${newId()}`,{truck:t.number,truckKey:t.key,loadId:todayLoad.fid||'',type,severity:sev,note,photoId,status:'open',authorUid:session.uid,authorName:session.name,createdAt:fb().serverTimestamp()});
+    await writeAuditLog({type:'truck_issue',truck:t.number,severity:sev,issue:type}).catch(()=>{});
+    closeModal('issue-modal');toast('⚠️ Sent to your manager');renderDashTruckIssues();}
+  catch(e){console.log('issue',e);err.textContent=e&&e.code==='permission-denied'?'Not allowed: is this truck still registered and active?':'Could not send. Check your connection.';}
+  finally{b.disabled=false;b.textContent='Send to manager';}
+}
+function openFuelModal(){const t=curTruck();if(!t){toast('Start a Morning Load first',true);return;}
+  el('fuel-truck').textContent=`Truck ${t.number}`;['fuel-gal','fuel-amt','fuel-note','fuel-photo'].forEach(i=>el(i).value='');el('fuel-odo').value=todayLoad.odometer||'';el('fuel-err').textContent='';
+  el('fuel-modal').classList.add('open');}
+async function saveFuel(){
+  const t=curTruck(),gal=Number(el('fuel-gal').value),amt=Number(el('fuel-amt').value),odo=Number(el('fuel-odo').value),err=el('fuel-err');
+  if(!(gal>0&&gal<=300)){err.textContent='Gallons: between 0 and 300.';return;}
+  if(el('fuel-amt').value===''||!(amt>=0&&amt<=3000)){err.textContent='Total: between $0 and $3,000.';return;}
+  if(el('fuel-odo').value===''||!(odo>=0)){err.textContent='Enter the odometer.';return;}
+  if(isOffline){err.textContent='You are offline. Try again when you have signal.';return;}
+  const b=el('fuel-save');b.disabled=true;b.textContent='Saving…';
+  try{const photoId=await savePhotoFrom('fuel-photo');
+    await fbSet(`fuel/${newId()}`,{truck:t.number,truckKey:t.key,loadId:todayLoad.fid||'',gallons:Math.round(gal*100)/100,amount:Math.round(amt*100)/100,odometer:odo,note:el('fuel-note').value.trim().slice(0,300),photoId,authorUid:session.uid,authorName:session.name,createdAt:fb().serverTimestamp()});
+    closeModal('fuel-modal');toast('⛽ Fuel saved');}
+  catch(e){console.log('fuel',e);err.textContent=e&&e.code==='permission-denied'?'Not allowed: is this truck still registered and active?':'Could not save. Check your connection.';}
+  finally{b.disabled=false;b.textContent='Save';}
+}
+async function renderDashTruckIssues(){
+  const box=el('dash-truck-issues');if(!box)return;box.innerHTML='';const t=curTruck();if(!t||isOffline)return;
+  try{const{where}=fb();const iss=await fbQuery('truckIssues',where('truckKey','==',t.key),where('status','==','open'));
+    if(iss.length)box.innerHTML=`<div class="alert a-warn"><span class="ai">⚠️</span><div><b>Open problem${iss.length>1?'s':''} on this truck</b><br>${byNewest(iss,'createdAt').map(i=>`${h(ISSUE_T[i.type]||i.type)} (${h(SEV[i.severity]?.[0]||'')})${i.note?': '+h(i.note):''}`).join('<br>')}</div></div>`;}catch(e){}
+}
+async function renderMgrIssues(){
+  const box=el('mgr-issues');if(!box)return;
+  try{const{where}=fb();openIssues=byNewest(await fbQuery('truckIssues',where('status','==','open')),'createdAt');}catch(e){openIssues=[];}
+  const rank={high:0,medium:1,low:2};const list=[...openIssues].sort((a,b)=>(rank[a.severity]??3)-(rank[b.severity]??3));
+  box.innerHTML=list.length?list.map(i=>`<div class="truck-row" style="align-items:flex-start"><div class="kpi-ic" style="background:var(--red-l);color:var(--red)"><i class="ti ti-alert-triangle"></i></div>
+    <div style="flex:1;min-width:0"><div style="font-weight:700">Truck ${h(i.truck)} · ${h(ISSUE_T[i.type]||i.type)} <span class="badge ${SEV[i.severity]?.[1]||''}">${h(SEV[i.severity]?.[0]||i.severity)}</span></div>
+    <div style="font-size:13px;color:var(--ink3)">${i.note?h(i.note)+' · ':''}${h(i.authorName)} · ${h(fmtWhen(i.createdAt))}</div>
+    <div style="display:flex;gap:6px;margin-top:6px">${i.photoId?`<button class="btn btn-outline btn-sm" onclick="showCtPhoto(${ja(i.photoId)},${ja('Truck '+i.truck)})">Photo</button>`:''}<button class="btn btn-green btn-sm" onclick="resolveIssue(${ja(i.fid)})">✓ Resolved</button></div></div></div>`).join('')
+    :'<div style="color:var(--ink3);font-size:14px;padding:12px 0;text-align:center">No open truck problems.</div>';
+}
+async function resolveIssue(id){
+  const r=prompt('What was done? (optional)');if(r===null)return;
+  try{await fbUpdate(`truckIssues/${id}`,{status:'resolved',resolvedBy:session.name,resolvedAt:fb().serverTimestamp(),resolution:String(r).trim().slice(0,500)});
+    await writeAuditLog({type:'truck_issue_resolved',issueId:id}).catch(()=>{});toast('✓ Resolved');await renderMgrIssues();updateBell();}
+  catch(e){console.log(e);toast('Could not save',true);}
+}
+const fmtWhen=v=>{const d=tsDate(v);return isNaN(d)?'—':d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});};
+// Admin › Trucks: register, activate, report (miles, fuel, problems, odometer gaps).
+async function addTruck(){
+  const num=el('tk-num').value.trim().slice(0,20),plate=el('tk-plate').value.trim().slice(0,20),err=el('tk-err'),k=truckKey(num);err.textContent='';
+  if(!k){err.textContent='Type the truck number.';return;}
+  if(TRUCKS.some(t=>t.key===k)){err.textContent=`Truck ${num} is already registered.`;return;}
+  try{await fbSet(`trucks/${k}`,{number:num,plate,active:true,createdAt:fb().serverTimestamp(),updatedAt:fb().serverTimestamp()});
+    await writeAuditLog({type:'truck_added',truck:num}).catch(()=>{});el('tk-num').value='';el('tk-plate').value='';toast('🚚 Truck added');buildTrucks();}
+  catch(e){console.log(e);err.textContent='Could not save.';}
+}
+async function setTruckActive(k,on){try{await fbUpdate(`trucks/${k}`,{active:on,updatedAt:fb().serverTimestamp()});await writeAuditLog({type:on?'truck_activated':'truck_deactivated',truck:k}).catch(()=>{});buildTrucks();}catch(e){toast('Could not save',true);}}
+async function importTrucks(nums){for(const n of nums){const k=truckKey(n);if(!k||TRUCKS.some(t=>t.key===k))continue;try{await fbSet(`trucks/${k}`,{number:n,plate:'',active:true,createdAt:fb().serverTimestamp(),updatedAt:fb().serverTimestamp()});}catch(e){console.log(e);}}toast('🚚 Trucks added');buildTrucks();}
+async function delFuel(id){if(!confirm('Delete this fuel entry? The crew can enter it again.'))return;try{await fbDel(`fuel/${id}`);await writeAuditLog({type:'fuel_deleted',fuelId:id}).catch(()=>{});buildTrucks();}catch(e){toast('Could not delete',true);}}
+let truckOpen='';
+function toggleTruck(k){truckOpen=truckOpen===k?'':k;buildTrucks();}
+async function buildTrucks(){
+  const box=el('trucks-list');if(!box)return;box.innerHTML='<div class="spinner"></div>';
+  try{
+    const[ , logs,fuel,issues]=await Promise.all([loadTrucks(),fbQuery('logs'),fbQuery('fuel'),fbQuery('truckIssues')]);
+    // Trucks used on past loads but not registered: one tap to add them.
+    const known=new Set(TRUCKS.map(t=>t.key)),old=[...new Map(logs.filter(l=>l.truck&&!known.has(truckKey(l.truck))).map(l=>[truckKey(l.truck),String(l.truck).slice(0,20)])).values()].filter(n=>truckKey(n));
+    el('trucks-import').innerHTML=old.length?`<div class="alert a-info"><span class="ai">🚚</span><div>Trucks used on past loads, not registered yet: <b>${old.map(h).join(', ')}</b><div style="margin-top:8px"><button class="btn btn-gold btn-sm" onclick='importTrucks(${h(JSON.stringify(old))})'>Add them</button></div></div></div>`:'';
+    if(!TRUCKS.length){box.innerHTML='<div class="empty"><div class="empty-icon">🚚</div><h3>No trucks yet</h3><p style="color:var(--ink3)">Add the trucks your crews use.</p></div>';return;}
+    const d30=Date.now()-30*864e5,inLast=v=>{const t=tsDate(v);return !isNaN(t)&&t.getTime()>=d30;};
+    box.innerHTML=TRUCKS.map(t=>{
+      const tl=logs.filter(l=>truckKey(l.truck)===t.key).sort((a,b)=>new Date(a.date)-new Date(b.date));
+      const miles=tl.filter(l=>inLast(l.date)&&l.odometerEnd!=null).reduce((a,l)=>a+Math.max(0,Number(l.odometerEnd)-(Number(l.odometer)||0)),0);
+      const tf=byNewest(fuel.filter(f=>f.truckKey===t.key),'createdAt'),f30=tf.filter(f=>inLast(f.createdAt));
+      const gal=f30.reduce((a,f)=>a+(Number(f.gallons)||0),0),usd=f30.reduce((a,f)=>a+(Number(f.amount)||0),0);
+      const ti=byNewest(issues.filter(i=>i.truckKey===t.key),'createdAt'),open=ti.filter(i=>i.status==='open').length;
+      const odos=tl.flatMap(l=>[Number(l.odometer)||0,l.odometerEnd!=null?Number(l.odometerEnd):0]).concat(tf.map(f=>Number(f.odometer)||0));const last=odos.length?Math.max(...odos):0;
+      // Odometer check: each load should start where the previous one ended.
+      const gaps=[];for(let i=1;i<tl.length;i++){const p=tl[i-1],c=tl[i];if(p.odometerEnd==null||!c.odometer)continue;const d=Number(c.odometer)-Number(p.odometerEnd);if(d!==0)gaps.push({date:c.dateDisplay||String(c.date).slice(0,10),d,by:c.submittedBy});}
+      const det=truckOpen===t.key?`<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;font-size:13px">
+        ${gaps.length?`<div class="sec-label" style="margin-top:0">Odometer check</div>${gaps.slice(-10).reverse().map(g=>`<div style="color:${g.d<0?'var(--red)':'var(--gold-d)'}">${h(g.date)} · ${g.d>0?`${g.d} mi not on any load`:`started ${-g.d} mi below the last Return`} · ${h(g.by||'')}</div>`).join('')}`:''}
+        <div class="sec-label">Problems</div>${ti.length?ti.slice(0,15).map(i=>`<div style="padding:4px 0">${h(fmtWhen(i.createdAt))} · <b>${h(ISSUE_T[i.type]||i.type)}</b> (${h(SEV[i.severity]?.[0]||'')}) · ${h(i.authorName)}${i.note?': '+h(i.note):''} · ${i.status==='open'?'<span style="color:var(--red);font-weight:700">Open</span>':`Resolved by ${h(i.resolvedBy||'')}${i.resolution?': '+h(i.resolution):''}`}${i.photoId?` · <a href="#" onclick="event.preventDefault();showCtPhoto(${ja(i.photoId)},${ja('Truck '+t.number)})">photo</a>`:''}</div>`).join(''):'<div style="color:var(--ink3)">None.</div>'}
+        <div class="sec-label">Fuel</div>${tf.length?tf.slice(0,20).map(f=>`<div style="padding:4px 0;display:flex;gap:8px;align-items:center"><div style="flex:1">${h(fmtWhen(f.createdAt))} · ${h(f.gallons)} gal · $${h(Number(f.amount).toFixed(2))} · ${h(f.odometer)} mi · ${h(f.authorName)}${f.note?' · '+h(f.note):''}${f.photoId?` · <a href="#" onclick="event.preventDefault();showCtPhoto(${ja(f.photoId)},'Fuel receipt')">receipt</a>`:''}</div><button class="btn btn-red btn-sm" onclick="delFuel(${ja(f.fid)})">✕</button></div>`).join(''):'<div style="color:var(--ink3)">None.</div>'}
+      </div>`:'';
+      return `<div class="card" style="${t.active?'':'opacity:.65'}"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div style="cursor:pointer;flex:1" onclick="toggleTruck(${ja(t.key)})"><div style="font-weight:800;font-size:16px">🚚 ${h(t.number)}${t.plate?` <span style="font-weight:500;color:var(--ink3);font-size:13px">· ${h(t.plate)}</span>`:''}${t.active?'':' <span class="badge badge-closed">Inactive</span>'}</div>
+        <div style="font-size:12px;color:var(--ink3);margin-top:2px">Last odometer ${last?last+' mi':'—'} · 30 days: ${miles} mi · ${Math.round(gal*10)/10} gal · $${usd.toFixed(2)}${open?` · <span style="color:var(--red);font-weight:700">${open} open problem${open>1?'s':''}</span>`:''}${gaps.length?` · <span style="color:var(--gold-d);font-weight:700">odometer check</span>`:''}</div></div>
+        <button class="btn btn-outline btn-sm" onclick="setTruckActive(${ja(t.key)},${!t.active})">${t.active?'Deactivate':'Activate'}</button></div>${det}</div>`;}).join('');
+  }catch(e){console.log('trucks',e);box.innerHTML='<div class="alert a-err"><span class="ai">⚠️</span><div>Could not load the trucks.</div></div>';}
+}
+
 function openJobPlan(id){showScreen('s-fieldproof');const f=el('fp-frame');if(f)f.setAttribute('src','fieldproof/index.html?embed=1#site='+encodeURIComponent(id));}
 
 // ═══════════════════════ JOB MODAL ═══════════════════════════════
@@ -2410,6 +2612,7 @@ function buildReturnScreen(){
   el('ret-manual-fallback').style.display='none';
   el('ret-boxes-section').style.display='none';
   el('ret-pending-boxes').style.display='none';
+  el('ret-odo').value='';el('ret-odo-hint').textContent=todayLoad.odometer?`Morning: ${todayLoad.odometer} mi`:'';
   // Show which boxes need to be returned
   checkUnreturnedBoxes();
 }
@@ -2629,6 +2832,10 @@ function renderRetScannedBoxes(){
 function removeRetBox(i){retScannedBoxes.splice(i,1);renderRetScannedBoxes();}
 
 async function closeReturnDay(){
+  const odoS=(el('ret-odo')?.value||'').trim(),odoEnd=Number(odoS),odoStart=Number(todayLoad?.odometer)||0;
+  if(odoS===''||!(odoEnd>=0)){toast('Enter the odometer at return',true);el('ret-odo')?.focus();return;}
+  if(odoEnd<odoStart){toast(`The odometer cannot be lower than this morning (${odoStart} mi)`,true);return;}
+  if(odoEnd>odoStart+3000){toast('Check the odometer: more than 3,000 miles in one load',true);return;}
   if(!retScannedBoxes.length){
     if(!confirm('No boxes scanned. Close day with no returns?\n\nThis will log all boxes as unaccounted.'))return;
   }
@@ -2658,12 +2865,12 @@ async function closeReturnDay(){
     used[color][b.materialId]=(used[color][b.materialId]||0)+b.usedQty;
   });
 
-  todayLoad.used=used;todayLoad.status='pending';todayLoad.jobs=todayJobs.map(j=>j.fid);
+  todayLoad.used=used;todayLoad.status='pending';todayLoad.jobs=todayJobs.map(j=>j.fid);todayLoad.odometerEnd=odoEnd;
   todayLoad.returnedBoxes=retScannedBoxes.map(b=>({boxId:b.boxId,status:b.status,remainingQty:b.remainingQty,usedQty:b.usedQty}));
 
   try{
     if(todayLoad.fid)await returnLoadAndRelease(todayLoad.fid,{
-      used,status:'pending',
+      used,status:'pending',odometerEnd:odoEnd,
       jobs:todayLoad.jobs,
       returnedBoxes:todayLoad.returnedBoxes
     });
@@ -2756,7 +2963,7 @@ function rCardHTML(log,isAdmin){
       <div class="rcard-meta">Doc: ${h(docNumber(log))}</div>
       ${log.jobId?`<div class="rcard-meta">Job ID: ${h(log.jobId)}</div>`:''}
       ${log.condo?`<div class="rcard-meta">Condo: ${h(log.condo)}</div>`:''}
-      ${log.odometer?`<div class="rcard-meta">Odometer: ${h(log.odometer)} mi</div>`:''}
+      ${log.odometer||log.odometerEnd?`<div class="rcard-meta">Odometer: ${h(odoText(log))}</div>`:''}
       ${isAdmin?`<div class="rcard-meta">By: ${h(log.submittedBy)}</div>`:''}
     </div><span class="badge ${bc}">${bt}</span></div>
     <div class="rcard-body"><div style="font-size:11px;color:var(--ink3);margin-bottom:6px">Crew: ${crewLine(log,isAdmin)}</div>${body}
@@ -2961,7 +3168,7 @@ function buildAdminPanel(){
 }
 
 function adminTab(tab){
-  ['sheets','users','ids','mats','boxes','print','security'].forEach(t=>{
+  ['sheets','users','ids','mats','boxes','trucks','print','security'].forEach(t=>{
     const v=el('admin-'+t+'-view');if(v)v.style.display=t===tab?'':'none';
     const b=el('at-'+t);
     if(b){
@@ -2979,6 +3186,7 @@ function adminTab(tab){
   if(tab==='ids')buildEmpIds();
   if(tab==='mats')buildMgrMats();
   if(tab==='boxes')buildBoxes();
+  if(tab==='trucks')buildTrucks();
   if(tab==='print')buildPrintSelector();
 }
 
@@ -3459,6 +3667,7 @@ async function buildLoadStart(){
   await refreshActive();
   const busy=myActive?`You are already on Truck ${h(myActive.truck||'?')}${todayLoad?'':' (waiting for your confirmation on the Dashboard)'}. Do the Return of that load before starting another one.`:'';
   if(busy){blk.innerHTML=`<div class="alert a-warn"><span class="ai">🚛</span><div>${busy}<div style="margin-top:8px"><button class="btn btn-gold btn-sm" onclick="showScreen('s-dash')">Go to Dashboard</button></div></div></div>`;el('ls1').style.display='none';el('ls2').style.display='none';el('ls3').style.display='none';return;}
+  fillTruckSelect();
   renderCrewPicker();
 }
 async function renderCrewPicker(){
@@ -3590,11 +3799,12 @@ function renderNotesBadges(){
 }
 function updateBell(){
   const bell=el('bell-btn'),bc=el('bell-count');if(!bell)return;
-  const total=(isMgrRole()?pendCount:0)+notesUnread.length+invitesList.length;
+  const total=(isMgrRole()?pendCount+openIssues.length:0)+notesUnread.length+invitesList.length;
   bell.style.display=session&&(isMgrRole()||total)?'flex':'none';
   bc.textContent=total;bc.style.display=total?'flex':'none';
 }
-function bellClick(){if(invitesList.length)showScreen('s-dash');else if(notesUnread.length)openNotes(notesUnread[0].loadId);else showScreen('s-admin');}
+function bellClick(){if(invitesList.length)showScreen('s-dash');else if(notesUnread.length)openNotes(notesUnread[0].loadId);
+  else if(isMgrRole()&&openIssues.length){showScreen('s-dash');setTimeout(()=>el('mgr-issues-panel')?.scrollIntoView({behavior:'smooth'}),400);}else showScreen('s-admin');}
 
 async function fetchNotes(loadId){
   if(!loadId||!session)return[];
@@ -3777,7 +3987,7 @@ async function printLog(log){
   if(!colors.length&&!(log.returnedBoxes||[]).length){
     // Fallback: show box-based report
     el('print-sheet').innerHTML=`<div class="print-page">
-      ${printHeader('Daily Load Sheet',`<strong>Truck ${h(log.truck)}</strong>Doc: ${h(docNo)}<br>Odometer: ${h(log.odometer||'—')} mi<br>Job ID: ${h(log.jobId||'—')}<br>Loaded: ${h(log.dateDisplay)}<br>By: ${h(log.submittedBy)}`)}
+      ${printHeader('Daily Load Sheet',`<strong>Truck ${h(log.truck)}</strong>Doc: ${h(docNo)}<br>Odometer: ${h(odoText(log))}<br>Job ID: ${h(log.jobId||'—')}<br>Loaded: ${h(log.dateDisplay)}<br>By: ${h(log.submittedBy)}`)}
       <div style="text-align:center;padding:40px;color:#888">No material data available for this load.</div>
       ${notesPrintHtml(notes)}
       <div class="print-footer"><div class="sign-box">Driver Signature</div><div class="sign-box">Manager Signature</div><div class="sign-box">Date</div></div>
@@ -3800,7 +4010,7 @@ async function printLog(log){
       });
     }
     pageList.push((n,total)=>`<div class="print-page">
-      ${printHeader('Daily Load Sheet',`<strong>Truck ${h(log.truck)}</strong>Doc: ${h(docNo)}<br>Odometer: ${h(log.odometer||'—')} mi<br>Job ID: ${h(log.jobId||'—')}<br>Address: ${h(log.job||'—')}${log.condo?`<br>Condo: ${h(log.condo)}`:''}<br>Loaded: ${h(log.dateDisplay)}${log.jobDateDisplay&&log.jobDateDisplay!==log.dateDisplay?`<br>Job: ${h(log.jobDateDisplay)}`:''}<br>Crew: ${h((log.crew||[]).join(', ')||'—')}<br>By: ${h(log.submittedBy)}`)}
+      ${printHeader('Daily Load Sheet',`<strong>Truck ${h(log.truck)}</strong>Doc: ${h(docNo)}<br>Odometer: ${h(odoText(log))}<br>Job ID: ${h(log.jobId||'—')}<br>Address: ${h(log.job||'—')}${log.condo?`<br>Condo: ${h(log.condo)}`:''}<br>Loaded: ${h(log.dateDisplay)}${log.jobDateDisplay&&log.jobDateDisplay!==log.dateDisplay?`<br>Job: ${h(log.jobDateDisplay)}`:''}<br>Crew: ${h((log.crew||[]).join(', ')||'—')}<br>By: ${h(log.submittedBy)}`)}
       <div class="print-section-title">Color: ${h(c)}</div>
       <table class="ptbl">
         <tr><th>Material</th><th>Unit</th><th>Out</th><th>Used</th><th>Return</th></tr>
@@ -3825,7 +4035,7 @@ function buildReportText(log){
   let t=`📋 DAILY LOAD SHEET — ${(CUSTOMER?CUSTOMER.printName:APP.name).toUpperCase()}\nDoc: ${docNumber(log)}\nLoaded: ${log.dateDisplay}`;
   if(log.jobDateDisplay&&log.jobDateDisplay!==log.dateDisplay)t+=`\nJob Date: ${log.jobDateDisplay}`;
   t+=`\nTruck: ${log.truck}`;
-  if(log.odometer)t+=`\nOdometer: ${log.odometer} mi`;
+  if(log.odometer||log.odometerEnd)t+=`\nOdometer: ${odoText(log)}`;
   if(log.jobId)t+=`\nJob ID: ${log.jobId}`;
   if(log.job)t+=`\nAddress: ${log.job}`;
   if(log.condo)t+=`\nCondo: ${log.condo}`;
