@@ -1220,7 +1220,7 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // Firestore document config/company, which only 29 Cyber edits, in the
 // Firebase console (the security rules block every write from the app).
 // No document = the app and its printed sheets show the 29 Cyber brand.
-const APP={name:'29Cyber CrewTrack',version:'2.6.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'2.6.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
   crewDomain:'crew.dgk.internal'   // crew sign-in: <Employee ID>@<crewDomain>
 };
@@ -2319,11 +2319,16 @@ function toggleTruck(k){truckOpen=truckOpen===k?'':k;buildTrucks();}
 async function buildTrucks(){
   const box=el('trucks-list');if(!box)return;box.innerHTML='<div class="spinner"></div>';
   try{
-    const[ , logs,fuel,issues]=await Promise.all([loadTrucks(),fbQuery('logs'),fbQuery('fuel'),fbQuery('truckIssues')]);
+    // Each part loads on its own: a refused part shows a warning instead of hiding the trucks.
+    const miss=[],part=(q,n)=>q.catch(e=>{console.log(n,e);miss.push(n);return[];});
+    let tErr=null;try{TRUCKS=(await fbQuery('trucks')).map(t=>({key:t.fid,...t})).sort((a,b)=>String(a.number).localeCompare(String(b.number),undefined,{numeric:true}));}catch(e){tErr=e;}
+    if(tErr){box.innerHTML=`<div class="alert a-err"><span class="ai">⚠️</span><div>Could not load the trucks (${h(tErr.code||'error')}). Are the Firestore rules v2.7 published?</div></div>`;return;}
+    const[logs,fuel,issues]=await Promise.all([part(fbQuery('logs'),'loads'),part(fbQuery('fuel'),'fuel'),part(fbQuery('truckIssues'),'truck problems')]);
     // Trucks used on past loads but not registered: one tap to add them.
     const known=new Set(TRUCKS.map(t=>t.key)),old=[...new Map(logs.filter(l=>l.truck&&!known.has(truckKey(l.truck))).map(l=>[truckKey(l.truck),String(l.truck).slice(0,20)])).values()].filter(n=>truckKey(n));
     el('trucks-import').innerHTML=old.length?`<div class="alert a-info"><span class="ai">🚚</span><div>Trucks used on past loads, not registered yet: <b>${old.map(h).join(', ')}</b><div style="margin-top:8px"><button class="btn btn-gold btn-sm" onclick='importTrucks(${h(JSON.stringify(old))})'>Add them</button></div></div></div>`:'';
-    if(!TRUCKS.length){box.innerHTML='<div class="empty"><div class="empty-icon">🚚</div><h3>No trucks yet</h3><p style="color:var(--ink3)">Add the trucks your crews use.</p></div>';return;}
+    const warn=miss.length?`<div class="alert a-warn"><span class="ai">⚠️</span><div>Not loaded: ${h(miss.join(', '))}. Check that the Firestore rules v2.7 are published.</div></div>`:'';
+    if(!TRUCKS.length){box.innerHTML=warn+'<div class="empty"><div class="empty-icon">🚚</div><h3>No trucks yet</h3><p style="color:var(--ink3)">Add the trucks your crews use.</p></div>';return;}
     const d30=Date.now()-30*864e5,inLast=v=>{const t=tsDate(v);return !isNaN(t)&&t.getTime()>=d30;};
     box.innerHTML=TRUCKS.map(t=>{
       const tl=logs.filter(l=>truckKey(l.truck)===t.key).sort((a,b)=>new Date(a.date)-new Date(b.date));
@@ -2343,6 +2348,7 @@ async function buildTrucks(){
         <div style="cursor:pointer;flex:1" onclick="toggleTruck(${ja(t.key)})"><div style="font-weight:800;font-size:16px">🚚 ${h(t.number)}${t.plate?` <span style="font-weight:500;color:var(--ink3);font-size:13px">· ${h(t.plate)}</span>`:''}${t.active?'':' <span class="badge badge-closed">Inactive</span>'}</div>
         <div style="font-size:12px;color:var(--ink3);margin-top:2px">Last odometer ${last?last+' mi':'—'} · 30 days: ${miles} mi · ${Math.round(gal*10)/10} gal · $${usd.toFixed(2)}${open?` · <span style="color:var(--red);font-weight:700">${open} open problem${open>1?'s':''}</span>`:''}${gaps.length?` · <span style="color:var(--gold-d);font-weight:700">odometer check</span>`:''}</div></div>
         <button class="btn btn-outline btn-sm" onclick="setTruckActive(${ja(t.key)},${!t.active})">${t.active?'Deactivate':'Activate'}</button></div>${det}</div>`;}).join('');
+    if(warn)box.insertAdjacentHTML('afterbegin',warn);
   }catch(e){console.log('trucks',e);box.innerHTML='<div class="alert a-err"><span class="ai">⚠️</span><div>Could not load the trucks.</div></div>';}
 }
 
