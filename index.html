@@ -1707,7 +1707,7 @@ function goLS1(){el('ls1').style.display='';el('ls2').style.display='none';el('l
 // keep=true when coming back from Review: the materials already added stay.
 async function goLS2(keep=false){
   if(!el('truck').value.trim()){toast('Choose the truck',true);return;}
-  const odoV=el('odometer').value.trim();if(odoV===''||!(Number(odoV)>=0)){toast('Enter the odometer',true);return;}
+  const odoV=el('odometer').value.trim();if(odoV===''||!(Number(odoV)>0)){toast('Enter the odometer',true);return;}
   if(!keep){const msg=await lockProblems(el('truck').value,pickedCrew);if(msg){toast(msg,true);return;}}
   el('ls1').style.display='none';el('ls2').style.display='';el('ls3').style.display='none';setSteps(1);
   pendingScanBox=null;
@@ -2238,10 +2238,10 @@ async function compressJpeg(file){
     for(let k=0;k<6;k++){const r=Math.min(1,m/Math.max(im.naturalWidth,im.naturalHeight));w=Math.round(im.naturalWidth*r);hh=Math.round(im.naturalHeight*r);const c=document.createElement('canvas');c.width=w;c.height=hh;c.getContext('2d').drawImage(im,0,0,w,hh);data=c.toDataURL('image/jpeg',q);if(data.length<850000)break;m=Math.round(m*0.8);q=Math.max(0.5,q-0.06);}
     return{data,w,h:hh};}finally{URL.revokeObjectURL(url);}
 }
-async function savePhotoFrom(inputId){
+async function savePhotoFrom(inputId,kind){
   const f=el(inputId)?.files?.[0];if(!f)return '';
   const{data,w,h:hh}=await compressJpeg(f),id=newId();
-  await fbSet(`ctPhotos/${id}`,{data,w,h:hh,authorUid:session.uid,createdAt:fb().serverTimestamp()});return id;
+  await fbSet(`ctPhotos/${id}`,{data,w,h:hh,kind,authorUid:session.uid,createdAt:fb().serverTimestamp()});return id;
 }
 async function showCtPhoto(id,title){
   el('photo-modal-t').textContent=title||'Photo';el('photo-modal-body').innerHTML='<div class="spinner"></div>';el('photo-modal').classList.add('open');
@@ -2257,7 +2257,7 @@ async function saveIssue(){
   if(type==='other'&&!note){err.textContent='Describe the problem.';return;}
   if(isOffline){err.textContent='You are offline. Try again when you have signal.';return;}
   const b=el('issue-save');b.disabled=true;b.textContent='Sending…';
-  try{const photoId=await savePhotoFrom('issue-photo');
+  try{const photoId=await savePhotoFrom('issue-photo','issue');
     await fbSet(`truckIssues/${newId()}`,{truck:t.number,truckKey:t.key,loadId:todayLoad.fid||'',type,severity:sev,note,photoId,status:'open',authorUid:session.uid,authorName:session.name,createdAt:fb().serverTimestamp()});
     await writeAuditLog({type:'truck_issue',truck:t.number,severity:sev,issue:type}).catch(()=>{});
     closeModal('issue-modal');toast('⚠️ Sent to your manager');renderDashTruckIssues();}
@@ -2274,7 +2274,7 @@ async function saveFuel(){
   if(el('fuel-odo').value===''||!(odo>=0)){err.textContent='Enter the odometer.';return;}
   if(isOffline){err.textContent='You are offline. Try again when you have signal.';return;}
   const b=el('fuel-save');b.disabled=true;b.textContent='Saving…';
-  try{const photoId=await savePhotoFrom('fuel-photo');
+  try{const photoId=await savePhotoFrom('fuel-photo','fuel');
     await fbSet(`fuel/${newId()}`,{truck:t.number,truckKey:t.key,loadId:todayLoad.fid||'',gallons:Math.round(gal*100)/100,amount:Math.round(amt*100)/100,odometer:odo,note:el('fuel-note').value.trim().slice(0,300),photoId,authorUid:session.uid,authorName:session.name,createdAt:fb().serverTimestamp()});
     closeModal('fuel-modal');toast('⛽ Fuel saved');}
   catch(e){console.log('fuel',e);err.textContent=e&&e.code==='permission-denied'?'Not allowed: is this truck still registered and active?':'Could not save. Check your connection.';}
@@ -2612,7 +2612,7 @@ function buildReturnScreen(){
   el('ret-manual-fallback').style.display='none';
   el('ret-boxes-section').style.display='none';
   el('ret-pending-boxes').style.display='none';
-  el('ret-odo').value='';el('ret-odo-hint').textContent=todayLoad.odometer?`Morning: ${todayLoad.odometer} mi`:'';
+  el('ret-odo').value='';el('ret-odo-hint').textContent=Number(todayLoad.odometer)>0?`Morning: ${todayLoad.odometer} mi`:'No morning odometer on this load: the return odometer is not recorded.';
   // Show which boxes need to be returned
   checkUnreturnedBoxes();
 }
@@ -2832,10 +2832,13 @@ function renderRetScannedBoxes(){
 function removeRetBox(i){retScannedBoxes.splice(i,1);renderRetScannedBoxes();}
 
 async function closeReturnDay(){
-  const odoS=(el('ret-odo')?.value||'').trim(),odoEnd=Number(odoS),odoStart=Number(todayLoad?.odometer)||0;
-  if(odoS===''||!(odoEnd>=0)){toast('Enter the odometer at return',true);el('ret-odo')?.focus();return;}
-  if(odoEnd<odoStart){toast(`The odometer cannot be lower than this morning (${odoStart} mi)`,true);return;}
-  if(odoEnd>odoStart+3000){toast('Check the odometer: more than 3,000 miles in one load',true);return;}
+  // Loads saved before v2.6 may have no morning odometer: then the Return odometer is not recorded.
+  const odoS=(el('ret-odo')?.value||'').trim(),odoEnd=Number(odoS),odoStart=Number(todayLoad?.odometer)||0,hasOdo=odoStart>0;
+  if(hasOdo){
+    if(odoS===''||!(odoEnd>=0)){toast('Enter the odometer at return',true);el('ret-odo')?.focus();return;}
+    if(odoEnd<odoStart){toast(`The odometer cannot be lower than this morning (${odoStart} mi)`,true);return;}
+    if(odoEnd>odoStart+3000){toast('Check the odometer: more than 3,000 miles in one load',true);return;}
+  }
   if(!retScannedBoxes.length){
     if(!confirm('No boxes scanned. Close day with no returns?\n\nThis will log all boxes as unaccounted.'))return;
   }
@@ -2865,12 +2868,12 @@ async function closeReturnDay(){
     used[color][b.materialId]=(used[color][b.materialId]||0)+b.usedQty;
   });
 
-  todayLoad.used=used;todayLoad.status='pending';todayLoad.jobs=todayJobs.map(j=>j.fid);todayLoad.odometerEnd=odoEnd;
+  todayLoad.used=used;todayLoad.status='pending';todayLoad.jobs=todayJobs.map(j=>j.fid);if(hasOdo)todayLoad.odometerEnd=odoEnd;
   todayLoad.returnedBoxes=retScannedBoxes.map(b=>({boxId:b.boxId,status:b.status,remainingQty:b.remainingQty,usedQty:b.usedQty}));
 
   try{
     if(todayLoad.fid)await returnLoadAndRelease(todayLoad.fid,{
-      used,status:'pending',odometerEnd:odoEnd,
+      used,status:'pending',...(hasOdo?{odometerEnd:odoEnd}:{}),
       jobs:todayLoad.jobs,
       returnedBoxes:todayLoad.returnedBoxes
     });
