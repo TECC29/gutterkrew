@@ -804,6 +804,13 @@ body.fp-open .app-foot{display:none}
         <div id="ret-odo-hint" style="font-size:12px;color:var(--ink3)"></div>
       </div>
       <button class="btn btn-green btn-full" style="margin-top:12px" onclick="closeReturnDay()">✓ Close Day & Generate Report</button>
+      <div id="ret-away-note"></div>
+      <div class="card" style="margin-top:12px;border:2px dashed var(--blue)">
+      <div style="font-size:13px;font-weight:700;color:var(--blue);margin-bottom:6px">📍 Staying Out?</div>
+      <div style="font-size:12px;color:var(--ink2);margin-bottom:10px;line-height:1.5">Crew staying away from warehouse? Material remains with truck until final return.</div>
+      <button class="btn btn-blue btn-full" onclick="markCrewAway()">📍 Crew Staying Out — No Return Today</button>
+    </div>
+
     </div>
   </div>
 
@@ -811,11 +818,6 @@ body.fp-open .app-foot{display:none}
     <div class="alert a-ok"><span class="ai">✅</span><div>Day closed! Report ready.</div></div>
     <button class="btn btn-outline btn-full" style="margin-top:8px" onclick="reopenSend()">📤 Send Report</button>
     <button class="btn btn-dark btn-full" style="margin-top:8px" onclick="printToday()">🖨️ Print Load Sheet</button>
-    <div class="card" style="margin-top:12px;border:2px dashed var(--blue)">
-      <div style="font-size:13px;font-weight:700;color:var(--blue);margin-bottom:6px">📍 Staying Out?</div>
-      <div style="font-size:12px;color:var(--ink2);margin-bottom:10px;line-height:1.5">Crew staying away from warehouse? Material remains with truck until final return.</div>
-      <button class="btn btn-blue btn-full" onclick="markCrewAway()">📍 Crew Staying Out — No Return Today</button>
-    </div>
   </div>
 </div>
 
@@ -1222,7 +1224,7 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // Firestore document config/company, which only 29 Cyber edits, in the
 // Firebase console (the security rules block every write from the app).
 // No document = the app and its printed sheets show the 29 Cyber brand.
-const APP={name:'29Cyber CrewTrack',version:'2.7.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'2.7.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
   crewDomain:'crew.dgk.internal'   // crew sign-in: <Employee ID>@<crewDomain>
 };
@@ -2678,7 +2680,8 @@ let retScanAttempts=0;
 
 function buildReturnScreen(){
   if(!todayLoad){el('ret-noload').style.display='';el('ret-form').style.display='none';el('ret-done').style.display='none';return;}
-  if(todayLoad.status!=='open'){el('ret-noload').style.display='none';el('ret-form').style.display='none';el('ret-done').style.display='';return;}
+  // The day is closed only when the returned material is recorded (an approved or "away" load still needs its Return).
+  if(todayLoad.used!=null){el('ret-noload').style.display='none';el('ret-form').style.display='none';el('ret-done').style.display='';return;}
   el('ret-noload').style.display='none';el('ret-done').style.display='none';el('ret-form').style.display='';
   retScannedBoxes=[];pendingReturnBox=null;pendingReturnStatus=null;retScanAttempts=0;
   el('ret-scan-pending').style.display='none';
@@ -2686,6 +2689,7 @@ function buildReturnScreen(){
   el('ret-manual-fallback').style.display='none';
   el('ret-boxes-section').style.display='none';
   el('ret-pending-boxes').style.display='none';
+  renderAwayNote();
   el('ret-odo').value='';el('ret-odo-hint').textContent=Number(todayLoad.odometer)>0?`Morning: ${todayLoad.odometer} mi`:'No morning odometer on this load: the return odometer is not recorded.';
   // Show which boxes need to be returned
   checkUnreturnedBoxes();
@@ -2961,6 +2965,8 @@ async function closeReturnDay(){
 function reopenSend(){openSendModal(todayLoad);}
 function printToday(){if(todayLoad)printLog(todayLoad);}
 
+function renderAwayNote(){const b=el('ret-away-note');if(!b)return;
+  b.innerHTML=todayLoad&&todayLoad.awayNote?`<div class="alert a-info" style="margin-top:12px"><span class="ai">📍</span><div><strong>Crew away</strong>: ${h(todayLoad.awayNote)}. Material stays with the truck. Do the Return here when the crew is back.</div></div>`:'';}
 async function markCrewAway(){
   if(!todayLoad){toast('No load recorded',true);return;}
   if(!confirm('Confirm: crew is staying out and will NOT return material today.\nMaterial remains assigned to the truck.'))return;
@@ -2975,8 +2981,7 @@ async function markCrewAway(){
     }
     await writeAuditLog({type:'crew_away',truck:todayLoad.truck,loadId:todayLoad.fid});
     toast('📍 Crew Away recorded.');
-    el('ret-done').innerHTML=`<div class="alert a-info"><span class="ai">📍</span><div><strong>Crew Away</strong> — Material stays with truck. Submit return when crew is back.</div></div>
-      <button class="btn btn-outline btn-full" style="margin-top:8px" onclick="reopenSend()">📤 Send Update</button>`;
+    renderAwayNote();
   }catch(e){toast('Error: '+e.message,true);}
 }
 
