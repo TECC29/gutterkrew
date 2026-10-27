@@ -2966,8 +2966,11 @@ async function markCrewAway(){
   if(!confirm('Confirm: crew is staying out and will NOT return material today.\nMaterial remains assigned to the truck.'))return;
   try{
     if(todayLoad.fid){
-      await fbUpdate(`logs/${todayLoad.fid}`,{status:'away',awayNote:`Crew staying out — ${session.name} on ${today()}`,awayDate:new Date().toISOString()});
-      todayLoad.status='away';
+      // An approved load stays approved (the rules keep it): "away" only adds the note.
+      const away={awayNote:`Crew staying out — ${session.name} on ${today()}`,awayDate:new Date().toISOString()};
+      if(todayLoad.status!=='approved')away.status='away';
+      await fbUpdate(`logs/${todayLoad.fid}`,away);
+      Object.assign(todayLoad,away);
       localStorage.setItem('dgk_today_load_'+session.uid,JSON.stringify(todayLoad));
     }
     await writeAuditLog({type:'crew_away',truck:todayLoad.truck,loadId:todayLoad.fid});
