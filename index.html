@@ -734,9 +734,12 @@ body.fp-open .app-foot{display:none}
 
     <!-- SCAN BOXES -->
     <div id="ret-step-scan">
-      <div class="alert a-info"><span class="ai">📦</span><div>Scan each box returning to the warehouse. For each box — enter how much material is left.</div></div>
+      <!-- Manual count: what comes back of each material that went out -->
+      <div id="ret-manual"></div>
 
-      <!-- Scanner -->
+      <!-- Scanner (boxes): shown only when the load had scanned boxes -->
+      <div id="ret-scan-area" style="display:none">
+      <div class="alert a-info"><span class="ai">📦</span><div>Scan each box returning to the warehouse. For each box — enter how much material is left.</div></div>
       <div class="card" style="text-align:center;padding:16px">
         <div style="font-size:36px;margin-bottom:6px">📷</div>
         <div style="font-size:13px;font-weight:700;margin-bottom:6px">Scan Returning Box</div>
@@ -787,6 +790,7 @@ body.fp-open .app-foot{display:none}
         </div>
       </div>
 
+      </div>
       <!-- Processed boxes list -->
       <div id="ret-boxes-section" style="display:none">
         <div class="sec-label">Boxes Processed</div>
@@ -1224,7 +1228,7 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // Firestore document config/company, which only 29 Cyber edits, in the
 // Firebase console (the security rules block every write from the app).
 // No document = the app and its printed sheets show the 29 Cyber brand.
-const APP={name:'29Cyber CrewTrack',version:'2.7.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'2.7.2',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
   crewDomain:'crew.dgk.internal'   // crew sign-in: <Employee ID>@<crewDomain>
 };
@@ -2689,7 +2693,7 @@ function buildReturnScreen(){
   el('ret-manual-fallback').style.display='none';
   el('ret-boxes-section').style.display='none';
   el('ret-pending-boxes').style.display='none';
-  renderAwayNote();
+  renderAwayNote();renderManualReturn();
   el('ret-odo').value='';el('ret-odo-hint').textContent=Number(todayLoad.odometer)>0?`Morning: ${todayLoad.odometer} mi`:'No morning odometer on this load: the return odometer is not recorded.';
   // Show which boxes need to be returned
   checkUnreturnedBoxes();
@@ -2917,7 +2921,9 @@ async function closeReturnDay(){
     if(odoEnd<odoStart){toast(`The odometer cannot be lower than this morning (${odoStart} mi)`,true);return;}
     if(odoEnd>odoStart+3000){toast('Check the odometer: more than 3,000 miles in one load',true);return;}
   }
-  if(!retScannedBoxes.length){
+  let manual=null;
+  if(!usesBoxes()){manual=manualUsed();if(manual.err){toast(manual.err,true);return;}}
+  else if(!retScannedBoxes.length){
     if(!confirm('No boxes scanned. Close day with no returns?\n\nThis will log all boxes as unaccounted.'))return;
   }
 
@@ -2937,9 +2943,9 @@ async function closeReturnDay(){
     });
   }
 
-  // Build used data from scanned boxes
-  const used={};
-  retScannedBoxes.forEach(b=>{
+  // Build used data: manual count, or the scanned boxes
+  const used=manual?manual.used:{};
+  if(!manual)retScannedBoxes.forEach(b=>{
     if(b.status==='left')return; // not used
     const color=b.color;
     if(!used[color])used[color]={};
@@ -2965,6 +2971,32 @@ async function closeReturnDay(){
 function reopenSend(){openSendModal(todayLoad);}
 function printToday(){if(todayLoad)printLog(todayLoad);}
 
+// Manual count: one line per material and color that went out on the load.
+function returnRows(){const rows=[],ld=todayLoad?.loaded||{};Object.keys(ld).forEach(c=>MATERIALS.forEach(m=>{const out=Number(ld[c]?.[m.id])||0;if(out>0)rows.push({c,m,out});}));return rows;}
+function usesBoxes(){return confirmedBoxes.length>0;}
+function renderManualReturn(){
+  const box=el('ret-manual'),scan=el('ret-scan-area');if(!box)return;
+  if(scan)scan.style.display=usesBoxes()?'':'none';
+  if(usesBoxes()){box.innerHTML='';return;}
+  const rows=returnRows();
+  box.innerHTML=rows.length?`<div class="card"><div class="sec-label" style="margin-top:0">What comes back to the warehouse?</div>
+    <div style="font-size:12px;color:var(--ink3);margin-bottom:8px">Count what is coming back of each material. Type 0 if nothing comes back. Used = out − back.</div>
+    <table class="stbl"><tr><th>Material</th><th style="text-align:right">Out</th><th style="text-align:right;width:110px">Back</th><th style="text-align:right">Used</th></tr>
+    ${rows.map((r,i)=>`<tr><td style="font-size:12px">${h(r.m.name)}<div style="font-size:10px;color:var(--ink3)">${h(r.c)} · ${h(r.m.unitLabel||r.m.unit)}</div></td><td class="num">${h(r.out)}</td>
+      <td style="text-align:right"><input type="number" class="ret-back" data-i="${i}" min="0" max="${h(r.out)}" step="${h(Number(r.m.step)||1)}" inputmode="decimal" style="width:100px;margin:0;text-align:right" oninput="retCalc(${i})" aria-label="${h(r.m.name)} ${h(r.c)} back"></td>
+      <td class="num" id="ret-used-${i}" style="color:var(--red)">—</td></tr>`).join('')}</table></div>`
+    :'<div class="alert a-info"><span class="ai">📦</span><div>No material from the list on this load.</div></div>';
+}
+function retCalc(i){const r=returnRows()[i],inp=document.querySelector(`.ret-back[data-i="${i}"]`),u=el('ret-used-'+i);if(!r||!inp||!u)return;
+  const v=inp.value.trim(),b=Number(v);u.textContent=v===''||isNaN(b)?'—':(b<0||b>r.out?'⚠️':String(Math.round((r.out-b)*100)/100));}
+function manualUsed(){
+  const rows=returnRows(),used={};
+  for(let i=0;i<rows.length;i++){const r=rows[i],inp=document.querySelector(`.ret-back[data-i="${i}"]`),v=(inp?.value||'').trim(),b=Number(v);
+    if(v===''||isNaN(b))return{err:`Enter how much ${r.m.name} (${r.c}) comes back. Type 0 if none.`};
+    if(b<0||b>r.out)return{err:`${r.m.name} (${r.c}): back must be between 0 and ${r.out}.`};
+    (used[r.c]=used[r.c]||{})[r.m.id]=Math.round((r.out-b)*100)/100;}
+  return{used};
+}
 function renderAwayNote(){const b=el('ret-away-note');if(!b)return;
   b.innerHTML=todayLoad&&todayLoad.awayNote?`<div class="alert a-info" style="margin-top:12px"><span class="ai">📍</span><div><strong>Crew away</strong>: ${h(todayLoad.awayNote)}. Material stays with the truck. Do the Return here when the crew is back.</div></div>`:'';}
 async function markCrewAway(){
