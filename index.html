@@ -1049,6 +1049,8 @@ body.fp-open .app-foot{display:none}
     <div class="modal-handle"></div>
     <div class="modal-title">⚠️ Truck problem</div>
     <div style="font-size:13px;color:var(--ink3);margin-bottom:10px" id="issue-truck"></div>
+    <div id="issue-open"></div>
+    <div class="sec-label" id="issue-new-l" style="margin-top:6px">New problem</div>
     <label>What is wrong?</label>
     <select id="issue-type"><option value="tires">Tires</option><option value="brakes">Brakes</option><option value="lights">Lights</option><option value="engine">Engine</option><option value="body">Body / damage</option><option value="other">Other</option></select>
     <label>How serious?</label>
@@ -1220,7 +1222,7 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // Firestore document config/company, which only 29 Cyber edits, in the
 // Firebase console (the security rules block every write from the app).
 // No document = the app and its printed sheets show the 29 Cyber brand.
-const APP={name:'29Cyber CrewTrack',version:'2.6.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'2.7.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
   crewDomain:'crew.dgk.internal'   // crew sign-in: <Employee ID>@<crewDomain>
 };
@@ -1978,6 +1980,7 @@ async function confirmLoad(){
   const lockMsg=await lockProblems(el('truck').value,pickedCrew);
   if(lockMsg){errorSound();toast(lockMsg,true);if(confirmBtn){confirmBtn.textContent='✓ Confirm Load';confirmBtn.disabled=false;}return;}
   const names={[session.uid]:session.name};pickedCrew.forEach(u=>names[u]=personName(u));
+  const issuesAtLoad=await openIssuesOf(truckKey(el('truck').value)).then(a=>a.slice(0,20).map(issueSnap)).catch(()=>[]);
   todayLoad={
     date:new Date().toISOString(),dateDisplay:today(),
     jobDate:jd,jobDateDisplay:jdDisplay,
@@ -1987,7 +1990,7 @@ async function confirmLoad(){
     job:el('job').value.trim(),
     condo:el('condo').value.trim().slice(0,40),
     truckKey:truckKey(el('truck').value),
-    crew:[session.name],crewUids:[session.uid],invitedUids:[...pickedCrew],crewNames:names,
+    crew:[session.name],crewUids:[session.uid],invitedUids:[...pickedCrew],crewNames:names,issuesAtLoad,
     loaded:data,extraMats:[...extraMats],
     jobs:[],used:null,status:'open',
     submittedBy:session.name,submittedByUid:session.uid,approvedBy:null
@@ -2229,9 +2232,15 @@ async function fillTruckSelect(){
 }
 async function truckPicked(){
   const hint=el('truck-hint');if(!hint)return;hint.textContent='';const n=el('truck').value;if(!n)return;
-  try{const{where}=fb();const iss=(await fbQuery('truckIssues',where('truckKey','==',truckKey(n)),where('status','==','open')));
-    if(el('truck').value===n&&iss.length)hint.innerHTML=`<span style="color:var(--red);font-weight:700">⚠️ Open problem${iss.length>1?'s':''}: ${iss.map(i=>h(ISSUE_T[i.type]||i.type)+' ('+h(SEV[i.severity]?.[0]||i.severity)+')').join(', ')}</span>`;}catch(e){}
+  try{const iss=await openIssuesOf(truckKey(n));
+    if(el('truck').value===n&&iss.length)hint.innerHTML=issuesCard(iss,'This truck has open problems. They go on today\'s load sheet. Confirm them in "Truck problem" with "Still there".');}catch(e){}
 }
+async function openIssuesOf(key){const{where}=fb();return byNewest(await fbQuery('truckIssues',where('truckKey','==',key),where('status','==','open')),'createdAt');}
+const issueSnap=i=>({id:i.fid,type:i.type,severity:i.severity,note:String(i.note||'').slice(0,120),by:i.authorName||'',ack:!!i.ackUid,ackBy:i.ackBy||''});
+const ackLine=i=>i.ackUid||i.ack?`<span style="color:var(--green)">Seen by ${h(i.ackBy||'')}${i.ackAt?' · '+h(fmtWhen(i.ackAt)):''}</span>`:'<span style="color:var(--red);font-weight:700">Not seen by the office yet</span>';
+function issuesCard(iss,lead){return `<div class="alert a-err" style="margin-top:6px"><span class="ai">⚠️</span><div><b>${iss.length} open problem${iss.length>1?'s':''}</b>${lead?`<div style="font-size:12px;margin:2px 0 4px">${h(lead)}</div>`:''}
+  ${iss.map(i=>`<div style="font-size:13px;margin-top:4px">${h(ISSUE_T[i.type]||i.type)} (${h(SEV[i.severity]?.[0]||i.severity)})${i.note?': '+h(i.note):''}<br><span style="font-size:12px">Reported by ${h(i.authorName||i.by||'')}${i.createdAt?' · '+h(fmtWhen(i.createdAt)):''} · ${ackLine(i)}</span></div>`).join('')}</div></div>`;}
+const stillId=()=>{const d=new Date();return `still_${session.uid}_${d.getUTCFullYear()}-${d.getUTCMonth()+1}-${d.getUTCDate()}`;};
 async function compressJpeg(file){
   const url=URL.createObjectURL(file);
   try{const im=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=url;});let m=1280,q=0.72,data,w,hh;
@@ -2251,7 +2260,23 @@ async function showCtPhoto(id,title){
 function curTruck(){if(!todayLoad||!todayLoad.truck)return null;return{number:todayLoad.truck,key:todayLoad.truckKey||truckKey(todayLoad.truck)};}
 function openIssueModal(){const t=curTruck();if(!t){toast('Start a Morning Load first',true);return;}
   el('issue-truck').textContent=`Truck ${t.number}. Your manager gets an alert.`;el('issue-type').value='tires';el('issue-sev').value='medium';el('issue-note').value='';el('issue-photo').value='';el('issue-err').textContent='';
-  el('issue-modal').classList.add('open');}
+  el('issue-modal').classList.add('open');renderIssueOpen();}
+async function renderIssueOpen(){
+  const box=el('issue-open'),t=curTruck();if(!box||!t)return;box.innerHTML='<div class="spinner"></div>';
+  try{const iss=await openIssuesOf(t.key);
+    const done=await Promise.all(iss.map(i=>fbGet(`truckIssues/${i.fid}/events/${stillId()}`).then(x=>!!x).catch(()=>false)));
+    box.innerHTML=iss.length?`<div class="sec-label" style="margin-top:0">Already reported on this truck</div><div style="font-size:12px;color:var(--ink3);margin-bottom:6px">If it is the same problem, do not report it again: tap "Still there".</div>`+iss.map((i,k)=>`<div class="card" style="padding:10px;margin-bottom:8px">
+      <div style="font-weight:700;font-size:14px">${h(ISSUE_T[i.type]||i.type)} (${h(SEV[i.severity]?.[0]||i.severity)})</div>
+      <div style="font-size:12px;color:var(--ink3)">${i.note?h(i.note)+' · ':''}${h(i.authorName)} · ${h(fmtWhen(i.createdAt))} · ${ackLine(i)}</div>
+      <button class="btn ${done[k]?'btn-outline':'btn-gold'} btn-sm" style="margin-top:6px" ${done[k]?'disabled':''} onclick="stillThere(${ja(i.fid)},this)">${done[k]?'✓ Confirmed today':'Still there'}</button></div>`).join(''):'';
+  }catch(e){console.log('issue open',e);box.innerHTML='';}
+}
+async function stillThere(id,btn){
+  btn.disabled=true;btn.textContent='Saving…';
+  try{await fbSet(`truckIssues/${id}/events/${stillId()}`,{type:'still',byUid:session.uid,byName:session.name,at:fb().serverTimestamp(),loadId:todayLoad?.fid||'',note:''});
+    btn.textContent='✓ Confirmed today';btn.className='btn btn-outline btn-sm';toast('✓ Confirmed: still there');}
+  catch(e){console.log('still',e);btn.disabled=false;btn.textContent='Still there';toast(e&&e.code==='permission-denied'?'Already confirmed today, or already resolved':'Could not save',true);}
+}
 async function saveIssue(){
   const t=curTruck(),type=el('issue-type').value,sev=el('issue-sev').value,note=el('issue-note').value.trim().slice(0,1000),err=el('issue-err');
   if(type==='other'&&!note){err.textContent='Describe the problem.';return;}
@@ -2283,22 +2308,38 @@ async function saveFuel(){
 async function renderDashTruckIssues(){
   const box=el('dash-truck-issues');if(!box)return;box.innerHTML='';const t=curTruck();if(!t||isOffline)return;
   try{const{where}=fb();const iss=await fbQuery('truckIssues',where('truckKey','==',t.key),where('status','==','open'));
-    if(iss.length)box.innerHTML=`<div class="alert a-warn"><span class="ai">⚠️</span><div><b>Open problem${iss.length>1?'s':''} on this truck</b><br>${byNewest(iss,'createdAt').map(i=>`${h(ISSUE_T[i.type]||i.type)} (${h(SEV[i.severity]?.[0]||'')})${i.note?': '+h(i.note):''}`).join('<br>')}</div></div>`;}catch(e){}
+    if(iss.length)box.innerHTML=issuesCard(byNewest(iss,'createdAt'),'');}catch(e){}
 }
 async function renderMgrIssues(){
   const box=el('mgr-issues');if(!box)return;
   try{const{where}=fb();openIssues=byNewest(await fbQuery('truckIssues',where('status','==','open')),'createdAt');}catch(e){openIssues=[];}
-  const rank={high:0,medium:1,low:2};const list=[...openIssues].sort((a,b)=>(rank[a.severity]??3)-(rank[b.severity]??3));
-  box.innerHTML=list.length?list.map(i=>`<div class="truck-row" style="align-items:flex-start"><div class="kpi-ic" style="background:var(--red-l);color:var(--red)"><i class="ti ti-alert-triangle"></i></div>
+  const rank={high:0,medium:1,low:2};const list=[...openIssues].sort((a,b)=>(a.ackUid?1:0)-(b.ackUid?1:0)||(rank[a.severity]??3)-(rank[b.severity]??3));
+  const evs=await Promise.all(list.map(i=>fbQuery(`truckIssues/${i.fid}/events`).catch(()=>[])));
+  box.innerHTML=list.length?list.map((i,k)=>{const st=evs[k].filter(e=>e.type==='still'),last=byNewest(st,'at')[0];
+    return `<div class="truck-row" style="align-items:flex-start${i.ackUid?'':';border-left:3px solid var(--red);padding-left:8px'}"><div class="kpi-ic" style="background:var(--red-l);color:var(--red)"><i class="ti ti-alert-triangle"></i></div>
     <div style="flex:1;min-width:0"><div style="font-weight:700">Truck ${h(i.truck)} · ${h(ISSUE_T[i.type]||i.type)} <span class="badge ${SEV[i.severity]?.[1]||''}">${h(SEV[i.severity]?.[0]||i.severity)}</span></div>
     <div style="font-size:13px;color:var(--ink3)">${i.note?h(i.note)+' · ':''}${h(i.authorName)} · ${h(fmtWhen(i.createdAt))}</div>
-    <div style="display:flex;gap:6px;margin-top:6px">${i.photoId?`<button class="btn btn-outline btn-sm" onclick="showCtPhoto(${ja(i.photoId)},${ja('Truck '+i.truck)})">Photo</button>`:''}<button class="btn btn-green btn-sm" onclick="resolveIssue(${ja(i.fid)})">✓ Resolved</button></div></div></div>`).join('')
+    <div style="font-size:12px;margin-top:2px">${ackLine(i)}${st.length?` · <span style="color:var(--ink3)">Still there: ${st.length}× (last ${h(last.byName)}, ${h(fmtWhen(last.at))})</span>`:''}</div>
+    <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">${i.photoId?`<button class="btn btn-outline btn-sm" onclick="showCtPhoto(${ja(i.photoId)},${ja('Truck '+i.truck)})">Photo</button>`:''}
+    ${i.ackUid?`<button class="btn btn-green btn-sm" onclick="resolveIssue(${ja(i.fid)})">✓ Resolved</button>`:`<button class="btn btn-red btn-sm" onclick="ackIssue(${ja(i.fid)},this)">👁 Acknowledge</button>`}</div></div></div>`;}).join('')
     :'<div style="color:var(--ink3);font-size:14px;padding:12px 0;text-align:center">No open truck problems.</div>';
 }
+// Acknowledgement: the manager states "I have seen it". Recorded once, with server time.
+async function ackIssue(id,btn){
+  if(btn){btn.disabled=true;btn.textContent='Saving…';}
+  try{const{db,doc,writeBatch,serverTimestamp}=fb();const b=writeBatch(db),at=serverTimestamp();
+    b.update(doc(db,'truckIssues',id),{ackBy:session.name,ackUid:session.uid,ackAt:at});
+    b.set(doc(db,'truckIssues',id,'events','ack'),{type:'ack',byUid:session.uid,byName:session.name,at,loadId:'',note:''});
+    await b.commit();await writeAuditLog({type:'truck_issue_ack',issueId:id}).catch(()=>{});toast('👁 Acknowledged');await renderMgrIssues();updateBell();}
+  catch(e){console.log(e);toast(e&&e.code==='permission-denied'?'Already acknowledged':'Could not save',true);if(btn){btn.disabled=false;btn.textContent='👁 Acknowledge';}}
+}
 async function resolveIssue(id){
-  const r=prompt('What was done? (optional)');if(r===null)return;
-  try{await fbUpdate(`truckIssues/${id}`,{status:'resolved',resolvedBy:session.name,resolvedAt:fb().serverTimestamp(),resolution:String(r).trim().slice(0,500)});
-    await writeAuditLog({type:'truck_issue_resolved',issueId:id}).catch(()=>{});toast('✓ Resolved');await renderMgrIssues();updateBell();}
+  let r=prompt('What was done? (required)');if(r===null)return;r=String(r).trim().slice(0,500);
+  if(!r){toast('Write what was done',true);return;}
+  try{const{db,doc,writeBatch,serverTimestamp}=fb();const b=writeBatch(db),at=serverTimestamp();
+    b.update(doc(db,'truckIssues',id),{status:'resolved',resolvedBy:session.name,resolvedByUid:session.uid,resolvedAt:at,resolution:r});
+    b.set(doc(db,'truckIssues',id,'events','resolved'),{type:'resolved',byUid:session.uid,byName:session.name,at,loadId:'',note:r});
+    await b.commit();await writeAuditLog({type:'truck_issue_resolved',issueId:id}).catch(()=>{});toast('✓ Resolved');await renderMgrIssues();updateBell();}
   catch(e){console.log(e);toast('Could not save',true);}
 }
 const fmtWhen=v=>{const d=tsDate(v);return isNaN(d)?'—':d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});};
@@ -2330,6 +2371,11 @@ async function buildTrucks(){
     const warn=miss.length?`<div class="alert a-warn"><span class="ai">⚠️</span><div>Not loaded: ${h(miss.join(', '))}. Check that the Firestore rules v2.7 are published.</div></div>`:'';
     if(!TRUCKS.length){box.innerHTML=warn+'<div class="empty"><div class="empty-icon">🚚</div><h3>No trucks yet</h3><p style="color:var(--ink3)">Add the trucks your crews use.</p></div>';return;}
     const d30=Date.now()-30*864e5,inLast=v=>{const t=tsDate(v);return !isNaN(t)&&t.getTime()>=d30;};
+    // Timeline (seen, still there, approved loads) for the problems of the opened truck.
+    const evOf={};if(truckOpen){const ids=issues.filter(i=>i.truckKey===truckOpen).slice(0,15).map(i=>i.fid);
+      (await Promise.all(ids.map(x=>fbQuery(`truckIssues/${x}/events`).catch(()=>[])))).forEach((e,k)=>evOf[ids[k]]=e);}
+    const tline=i=>{const e=evOf[i.fid]||[],st=e.filter(x=>x.type==='still').length,ap=e.filter(x=>x.type==='approved_load').length;
+      return `<br><span style="font-size:12px;color:var(--ink3)">${i.ackUid?`Seen by ${h(i.ackBy)} · ${h(fmtWhen(i.ackAt))}`:'Not acknowledged'}${st?` · still there ${st}×`:''}${ap?` · ${ap} load${ap>1?'s':''} approved while open`:''}</span>`;};
     box.innerHTML=TRUCKS.map(t=>{
       const tl=logs.filter(l=>truckKey(l.truck)===t.key).sort((a,b)=>new Date(a.date)-new Date(b.date));
       const miles=tl.filter(l=>inLast(l.date)&&l.odometerEnd!=null).reduce((a,l)=>a+Math.max(0,Number(l.odometerEnd)-(Number(l.odometer)||0)),0);
@@ -2341,7 +2387,7 @@ async function buildTrucks(){
       const gaps=[];for(let i=1;i<tl.length;i++){const p=tl[i-1],c=tl[i];if(p.odometerEnd==null||!c.odometer)continue;const d=Number(c.odometer)-Number(p.odometerEnd);if(d!==0)gaps.push({date:c.dateDisplay||String(c.date).slice(0,10),d,by:c.submittedBy});}
       const det=truckOpen===t.key?`<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;font-size:13px">
         ${gaps.length?`<div class="sec-label" style="margin-top:0">Odometer check</div>${gaps.slice(-10).reverse().map(g=>`<div style="color:${g.d<0?'var(--red)':'var(--gold-d)'}">${h(g.date)} · ${g.d>0?`${g.d} mi not on any load`:`started ${-g.d} mi below the last Return`} · ${h(g.by||'')}</div>`).join('')}`:''}
-        <div class="sec-label">Problems</div>${ti.length?ti.slice(0,15).map(i=>`<div style="padding:4px 0">${h(fmtWhen(i.createdAt))} · <b>${h(ISSUE_T[i.type]||i.type)}</b> (${h(SEV[i.severity]?.[0]||'')}) · ${h(i.authorName)}${i.note?': '+h(i.note):''} · ${i.status==='open'?'<span style="color:var(--red);font-weight:700">Open</span>':`Resolved by ${h(i.resolvedBy||'')}${i.resolution?': '+h(i.resolution):''}`}${i.photoId?` · <a href="#" onclick="event.preventDefault();showCtPhoto(${ja(i.photoId)},${ja('Truck '+t.number)})">photo</a>`:''}</div>`).join(''):'<div style="color:var(--ink3)">None.</div>'}
+        <div class="sec-label">Problems</div>${ti.length?ti.slice(0,15).map(i=>`<div style="padding:4px 0">${h(fmtWhen(i.createdAt))} · <b>${h(ISSUE_T[i.type]||i.type)}</b> (${h(SEV[i.severity]?.[0]||'')}) · ${h(i.authorName)}${i.note?': '+h(i.note):''} · ${i.status==='open'?'<span style="color:var(--red);font-weight:700">Open</span>':`Resolved by ${h(i.resolvedBy||'')}${i.resolvedAt?' · '+h(fmtWhen(i.resolvedAt)):''}${i.resolution?': '+h(i.resolution):''}`}${i.photoId?` · <a href="#" onclick="event.preventDefault();showCtPhoto(${ja(i.photoId)},${ja('Truck '+t.number)})">photo</a>`:''}${tline(i)}</div>`).join(''):'<div style="color:var(--ink3)">None.</div>'}
         <div class="sec-label">Fuel</div>${tf.length?tf.slice(0,20).map(f=>`<div style="padding:4px 0;display:flex;gap:8px;align-items:center"><div style="flex:1">${h(fmtWhen(f.createdAt))} · ${h(f.gallons)} gal · $${h(Number(f.amount).toFixed(2))} · ${h(f.odometer)} mi · ${h(f.authorName)}${f.note?' · '+h(f.note):''}${f.photoId?` · <a href="#" onclick="event.preventDefault();showCtPhoto(${ja(f.photoId)},'Fuel receipt')">receipt</a>`:''}</div><button class="btn btn-red btn-sm" onclick="delFuel(${ja(f.fid)})">✕</button></div>`).join(''):'<div style="color:var(--ink3)">None.</div>'}
       </div>`:'';
       return `<div class="card" style="${t.active?'':'opacity:.65'}"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
@@ -2351,6 +2397,11 @@ async function buildTrucks(){
     if(warn)box.insertAdjacentHTML('afterbegin',warn);
   }catch(e){console.log('trucks',e);box.innerHTML='<div class="alert a-err"><span class="ai">⚠️</span><div>Could not load the trucks.</div></div>';}
 }
+
+// Printed load sheet: the truck problems that were open when the load was made.
+function issuesPrintHtml(log){const a=log.issuesAtLoad||[];if(!a.length)return '';
+  return `<div class="print-section-title">Truck problems open at load</div><table class="ptbl"><tr><th>Problem</th><th>Severity</th><th>Reported by</th><th>Office</th></tr>
+  ${a.map(i=>`<tr><td>${h(ISSUE_T[i.type]||i.type)}${i.note?': '+h(i.note):''}</td><td>${h(SEV[i.severity]?.[0]||i.severity)}</td><td>${h(i.by||'')}</td><td>${i.ack?'Seen by '+h(i.ackBy||''):'Not seen yet'}</td></tr>`).join('')}</table>`;}
 
 function openJobPlan(id){showScreen('s-fieldproof');const f=el('fp-frame');if(f)f.setAttribute('src','fieldproof/index.html?embed=1#site='+encodeURIComponent(id));}
 
@@ -2974,6 +3025,8 @@ function rCardHTML(log,isAdmin){
       ${log.condo?`<div class="rcard-meta">Condo: ${h(log.condo)}</div>`:''}
       ${log.odometer||log.odometerEnd?`<div class="rcard-meta">Odometer: ${h(odoText(log))}</div>`:''}
       ${isAdmin?`<div class="rcard-meta">By: ${h(log.submittedBy)}</div>`:''}
+      ${(log.issuesAtLoad||[]).length?`<div class="rcard-meta" style="color:var(--red);font-weight:700">⚠️ ${log.issuesAtLoad.length} open truck problem${log.issuesAtLoad.length>1?'s':''} at load: ${h(log.issuesAtLoad.map(i=>(ISSUE_T[i.type]||i.type)+' ('+(SEV[i.severity]?.[0]||i.severity)+')').join(', '))}</div>`:''}
+      ${log.status==='approved'&&log.approvedAt?`<div class="rcard-meta">Approved by ${h(log.approvedBy)} · ${h(fmtWhen(log.approvedAt))}</div>`:''}
     </div><span class="badge ${bc}">${bt}</span></div>
     <div class="rcard-body"><div style="font-size:11px;color:var(--ink3);margin-bottom:6px">Crew: ${crewLine(log,isAdmin)}</div>${body}
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px">${acts}</div></div>
@@ -2986,9 +3039,13 @@ async function approveLog(fid,btn){
     // Verify the log data
     const log=await fbGet(`logs/${fid}`);
     if(!log){toast('Log not found',true);if(btn){btn.disabled=false;btn.textContent='✓ Approve';}return;}
-    // Check if this load exceeded stock at the time
-    // We warn but still allow manager to approve (they have override authority)
-    await fbUpdate(`logs/${fid}`,{status:'approved',approvedBy:session.name});
+    // Open truck problems: the manager approves knowing them, and it is recorded on each problem.
+    let open=[];try{open=await openIssuesOf(log.truckKey||truckKey(log.truck));}catch(e){}
+    if(open.length&&!confirm(`Truck ${log.truck} has ${open.length} open problem${open.length>1?'s':''}:\n${open.map(i=>`- ${ISSUE_T[i.type]||i.type} (${SEV[i.severity]?.[0]||i.severity})${i.note?': '+i.note:''}`).join('\n')}\n\nApprove this load anyway? Your approval is recorded on each problem.`)){if(btn){btn.disabled=false;btn.textContent='✓ Approve';}return;}
+    const{db,doc,writeBatch,serverTimestamp}=fb();const b=writeBatch(db),at=serverTimestamp();
+    b.update(doc(db,'logs',fid),{status:'approved',approvedBy:session.name,approvedByUid:session.uid,approvedAt:at});
+    open.forEach(i=>b.set(doc(db,'truckIssues',i.fid,'events','load_'+fid),{type:'approved_load',byUid:session.uid,byName:session.name,at,loadId:fid,note:''}));
+    await b.commit();
     toast('✅ Approved');
     buildHistory();
     // Refresh admin sheets if visible
@@ -3808,12 +3865,12 @@ function renderNotesBadges(){
 }
 function updateBell(){
   const bell=el('bell-btn'),bc=el('bell-count');if(!bell)return;
-  const total=(isMgrRole()?pendCount+openIssues.length:0)+notesUnread.length+invitesList.length;
+  const total=(isMgrRole()?pendCount+openIssues.filter(i=>!i.ackUid).length:0)+notesUnread.length+invitesList.length;
   bell.style.display=session&&(isMgrRole()||total)?'flex':'none';
   bc.textContent=total;bc.style.display=total?'flex':'none';
 }
 function bellClick(){if(invitesList.length)showScreen('s-dash');else if(notesUnread.length)openNotes(notesUnread[0].loadId);
-  else if(isMgrRole()&&openIssues.length){showScreen('s-dash');setTimeout(()=>el('mgr-issues-panel')?.scrollIntoView({behavior:'smooth'}),400);}else showScreen('s-admin');}
+  else if(isMgrRole()&&openIssues.some(i=>!i.ackUid)){showScreen('s-dash');setTimeout(()=>el('mgr-issues-panel')?.scrollIntoView({behavior:'smooth'}),400);}else showScreen('s-admin');}
 
 async function fetchNotes(loadId){
   if(!loadId||!session)return[];
@@ -4029,7 +4086,8 @@ async function printLog(log){
       </table>
       ${jobsHtml}
       ${n===total?notesPrintHtml(notes):''}
-      ${log.status==='approved'?`<div class="print-status">✅ Approved by ${h(log.approvedBy)}</div>`:'<div class="print-status" style="border-color:#b45309;color:#78350f">⏳ Pending Approval</div>'}
+      ${n===total?issuesPrintHtml(log):''}
+      ${log.status==='approved'?`<div class="print-status">✅ Approved by ${h(log.approvedBy)}${log.approvedAt?' · '+h(fmtWhen(log.approvedAt)):''}</div>`:'<div class="print-status" style="border-color:#b45309;color:#78350f">⏳ Pending Approval</div>'}
       <div class="print-footer"><div class="sign-box">Driver Signature</div><div class="sign-box">Manager Signature</div><div class="sign-box">Date</div></div>
       ${printCredit(docNo,n,total)}
     </div>`);
