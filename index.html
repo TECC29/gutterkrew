@@ -1362,7 +1362,7 @@ function saveOfflineQueue(q){localStorage.setItem(OFFLINE_KEY,JSON.stringify(q))
 
 function queueOffline(type,data){
   const q=getOfflineQueue();
-  q.push({type,data,ts:Date.now()});
+  q.push({type,data,ts:Date.now(),tid:fb().tenant(),uid:fb().auth.currentUser?.uid||''});
   saveOfflineQueue(q);
 }
 
@@ -1370,7 +1370,10 @@ async function syncOfflineQueue(){
   const q=getOfflineQueue();
   if(!q.length) return;
   const remaining=[];
+  const tid=fb().tenant(),me=fb().auth.currentUser?.uid||'';
   for(const item of q){
+    // Only what this login queued in this company; anything else waits for its owner.
+    if(!tid||item.tid!==tid||item.uid!==me){remaining.push(item);continue;}
     try{
       if(item.type==='addLog') await fbAdd('logs',item.data);
       else if(item.type==='updateLog') await fbUpdate(`logs/${item.data.fid}`,item.data.update);
@@ -1378,7 +1381,7 @@ async function syncOfflineQueue(){
     }catch(e){ remaining.push(item); }
   }
   saveOfflineQueue(remaining);
-  if(remaining.length===0&&q.length>0) toast('✅ Offline data synced!');
+  if(remaining.length<q.length&&!remaining.some(i=>i.tid===tid&&i.uid===me)) toast('✅ Offline data synced!');
 }
 
 window.addEventListener('online',()=>{
@@ -1635,6 +1638,10 @@ async function doSetPassword(){
 
 // ═══════════════════════ COMPANY (v3.0) ═══════════════════════
 // Trial: 21 days from the creation time stamped by the server (the rules count it).
+// Same key as the rules: lower case, no +tag, no dots for Gmail (one trial per mailbox).
+function trialKey(e){const a=String(e||'').toLowerCase().split('@'),dom=a[a.length-1];let loc=a[0].split('+')[0];if(dom==='gmail.com'||dom==='googlemail.com')return loc.replace(/\./g,'')+'@gmail.com';return loc+'@'+dom;}
+// The company accepts writes (trial running or active). After the trial: read-only.
+function canWrite(){const i=trialInfo();return !i||!!i.active||!!i.trial;}
 function trialInfo(){if(!TENANT)return null;if(TENANT.plan==='active')return{active:true};
   const start=TENANT.createdAt?tsDate(TENANT.createdAt):null;if(!start||isNaN(start))return{closed:true};
   const end=TENANT.trialEndsAt?tsDate(TENANT.trialEndsAt):new Date(start.getTime()+21*864e5),left=Math.ceil((end-Date.now())/864e5);
@@ -1685,14 +1692,14 @@ async function finishCompanySignup(){
     await u.getIdToken(true);   // the rules read email_verified from a fresh token
     let ok=false,last=null;
     for(let i=0;i<4&&!ok;i++){
-      const tid=newId(),code=genCompanyCode(),F=fb(),{db,doc,writeBatch,serverTimestamp}=F,now=serverTimestamp(),b=writeBatch(db);
+      const tid=u.uid,code=genCompanyCode(),F=fb(),{db,doc,writeBatch,serverTimestamp}=F,now=serverTimestamp(),b=writeBatch(db);
       F.setTenant(tid);
       b.set(doc(db,'tenants',tid),{name:pendingCompany.company,code,plan:'trial',ownerUid:u.uid,ownerEmail:u.email,createdAt:now});
       b.set(doc(db,'codes',code),{tid});
       b.set(doc(db,'members',u.uid),{tid,createdAt:now});
       b.set(doc(db,'users',u.uid),{name:pendingCompany.name,email:u.email,role:'bigboss',status:'approved',registeredAt:new Date().toISOString(),apps:{crewtrack:true,fieldproof:true}});
       b.set(doc(db,'config','company'),{name:pendingCompany.company,printName:pendingCompany.company,phone:'',email:'',address:''});
-      b.set(doc(db,'trialEmails',String(u.email).toLowerCase()),{tid,at:now});
+      b.set(doc(db,'trialEmails',trialKey(u.email)),{tid,at:now});
       try{await b.commit();ok=true;lsCompany(code);}catch(e){last=e;F.setTenant(null);}
     }
     if(!ok){fail(last&&last.code==='permission-denied'?'This email already used its free trial, or already belongs to a company. Contact 29 Cyber.':'Could not create the company. Check your connection and try again.');return;}
@@ -1791,8 +1798,8 @@ async function _afterLogin(user){
     el('dash-date').textContent=today();
     await Promise.all([loadAppConfig(),loadCompany()]);
     startNotesWatch();
-    if(isMgrRole()){syncPeople().then(syncStockMoves);}
-    await syncOfflineQueue();
+    if(isMgrRole()&&canWrite()){syncPeople().then(syncStockMoves).catch(e=>console.log('sync:',e));}
+    if(canWrite())await syncOfflineQueue();
     // Restore today's load from localStorage
     try{
       const saved=localStorage.getItem('dgk_today_load_'+user.uid);
@@ -1840,7 +1847,7 @@ function cleanColors(list){
   return (Array.isArray(list)?list:[]).filter(c=>typeof c==='string'&&c.trim()).map(c=>c.trim());
 }
 async function loadAppConfig(){
-  const isMgr=session&&(session.role==='manager'||session.role==='bigboss');
+  const isMgr=session&&(session.role==='manager'||session.role==='bigboss')&&canWrite();
   try{
     const mats=await fbGet('config/materials');
     const list=cleanMaterials(mats?.list);
@@ -3669,6 +3676,7 @@ async function approveUser(fid,name){
 // login needs a server); delete it there before giving the same ID to someone else.
 async function releaseUser(fid,empId){
   {const{db,doc,writeBatch}=fb();const b=writeBatch(db);b.delete(doc(db,'users',fid));b.delete(doc(db,'members',fid));await b.commit();}
+  if(!canWrite())return;   // after the trial: the login is removed; the Employee ID is freed when the plan is active
   if(empId){
     try{await fbUpdate(`employeeIds/${empId}`,{used:false,assignedTo:'',assignedUid:'',inviteCode:genCode(8)});}
     catch(e){if(e.code!=='not-found')throw e;}
