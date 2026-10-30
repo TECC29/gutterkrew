@@ -11,7 +11,7 @@
 <script>try{if(localStorage.getItem("ct_theme")==="sun")document.documentElement.setAttribute("data-theme","sun")}catch(e){}</script>
 <script type="module">
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword }
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword, sendEmailVerification }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
   collection, query, where, orderBy, serverTimestamp, writeBatch, onSnapshot }
@@ -32,10 +32,23 @@ const db   = getFirestore(app);
 
 // Phase 1: initializeApp/getAuth/deleteApp + config let a manager create a crew
 // account in a separate, temporary Firebase instance without being signed out.
+// v3.0 multi-tenant: every path of the app lives inside the signed-in user's company
+// (tenants/{tid}/...). Only these collections are global. Done here, in one place.
+const GLOBAL = new Set(['tenants', 'members', 'codes', 'trialEmails']);
+let TID = null;
+const inTenant = segs => {
+  const s = segs.length === 1 ? String(segs[0]).split('/') : segs;
+  if (GLOBAL.has(String(s[0]))) return s;
+  if (!TID) throw Object.assign(new Error('No company selected'), { code: 'no-tenant' });
+  return ['tenants', TID, ...s];
+};
+const tdoc = (d, ...segs) => doc(d, ...inTenant(segs));
+const tcol = (d, ...segs) => collection(d, ...inTenant(segs));
 window._fb = { auth, db, createUserWithEmailAndPassword, signInWithEmailAndPassword,
-  signOut, onAuthStateChanged, updatePassword, doc, setDoc, getDoc, getDocs, addDoc, updateDoc,
-  deleteDoc, collection, query, where, orderBy, serverTimestamp, writeBatch, onSnapshot,
-  initializeApp, getAuth, deleteApp, firebaseConfig };
+  signOut, onAuthStateChanged, updatePassword, sendEmailVerification, doc: tdoc, setDoc, getDoc, getDocs, addDoc, updateDoc,
+  deleteDoc, collection: tcol, query, where, orderBy, serverTimestamp, writeBatch, onSnapshot,
+  initializeApp, getAuth, deleteApp, firebaseConfig,
+  setTenant: t => { TID = t || null; }, tenant: () => TID };
 window._fbReady = true;
 document.dispatchEvent(new Event('fbReady'));
 </script>
@@ -428,6 +441,8 @@ body.fp-open .app-foot{display:none}
           <button class="btn btn-outline btn-sm" id="lt-admin" onclick="setLT('admin')" style="flex:1">👩‍💼 Manager / Boss</button>
         </div>
         <div id="li-crew-f">
+          <label>Company code (6 characters, from your manager)</label>
+          <input type="text" id="li-company" placeholder="AB12CD" maxlength="6" autocomplete="organization" autocapitalize="characters" style="text-transform:uppercase;font-family:'JetBrains Mono',monospace;letter-spacing:2px">
           <label>Employee ID (7 digits)</label>
           <input type="text" id="li-empid" placeholder="1234567" maxlength="7" inputmode="numeric">
         </div>
@@ -443,11 +458,50 @@ body.fp-open .app-foot{display:none}
         <button class="btn btn-gold btn-full" id="li-signin-btn" style="margin-top:14px" onclick="doLogin()">Sign In →</button>
       </div>
       <button class="btn btn-outline btn-full" onclick="showAuth('register')">New crew member? Register here</button>
+      <button class="btn btn-outline btn-full" style="margin-top:8px" onclick="showAuth('signup')">New company? Start a 21-day free trial</button>
+    </div>
+
+    <!-- v3.0: a new company signs up (owner = bigboss) -->
+    <div id="auth-signup" style="display:none">
+      <div class="card">
+        <div style="font-size:15px;font-weight:800;margin-bottom:4px">Start your company</div>
+        <div style="font-size:13px;color:var(--ink3);margin-bottom:12px">21-day free trial, CrewTrack and FieldProof. No card needed. You will confirm your email first.</div>
+        <label>Company name</label><input type="text" id="su-company" maxlength="120" placeholder="Your company LLC" autocomplete="organization">
+        <label>Your name</label><input type="text" id="su-name" maxlength="80" placeholder="Full name" autocomplete="name">
+        <label>Email</label><input type="email" id="su-email" placeholder="you@company.com" autocomplete="email">
+        <label>Password</label><input type="password" id="su-pass" placeholder="Min 10 characters" autocomplete="new-password">
+        <label>Confirm password</label><input type="password" id="su-pass2" placeholder="Repeat password" autocomplete="new-password">
+        <div id="su-err" class="alert a-err" style="display:none;margin-top:10px"><span class="ai">⚠️</span><span id="su-err-msg"></span></div>
+        <button class="btn btn-gold btn-full" id="su-btn" style="margin-top:12px" onclick="doSignupCompany()">Create account →</button>
+      </div>
+      <button class="btn btn-outline btn-full" onclick="showAuth('login')">← Back to Sign In</button>
+    </div>
+    <div id="auth-verify" style="display:none">
+      <div class="card" style="text-align:center;padding:24px 18px">
+        <div style="font-size:40px;margin-bottom:8px">📧</div>
+        <div style="font-size:17px;font-weight:800;margin-bottom:6px">Confirm your email</div>
+        <div style="font-size:14px;color:var(--ink3);line-height:1.6;margin-bottom:14px">We sent a link to <strong id="verify-email"></strong>. Open it, then come back and tap Continue.</div>
+        <div id="verify-err" class="alert a-err" style="display:none;margin-bottom:10px;text-align:left"><span class="ai">⚠️</span><span id="verify-err-msg"></span></div>
+        <button class="btn btn-gold btn-full" id="verify-btn" onclick="finishCompanySignup()">I confirmed it, continue →</button>
+        <button class="btn btn-outline btn-full" style="margin-top:8px" onclick="resendVerify()">Send the link again</button>
+        <button class="btn btn-outline btn-full" style="margin-top:8px" onclick="doLogout()">Sign out</button>
+      </div>
+    </div>
+    <div id="auth-nocompany" style="display:none">
+      <div class="card" style="text-align:center;padding:24px 18px">
+        <div style="font-size:40px;margin-bottom:8px">🏢</div>
+        <div style="font-size:17px;font-weight:800;margin-bottom:6px">No company yet</div>
+        <div style="font-size:14px;color:var(--ink3);line-height:1.6;margin-bottom:14px">This login is not part of a company. Start your own, or ask your manager to add you.</div>
+        <button class="btn btn-gold btn-full" onclick="startCompanyFromLogin()">Start my company (21-day trial) →</button>
+        <button class="btn btn-outline btn-full" style="margin-top:8px" onclick="doLogout()">Sign out</button>
+      </div>
     </div>
 
     <div id="auth-register" style="display:none">
       <div class="card">
         <div style="font-size:15px;font-weight:800;margin-bottom:12px">Create Crew Account</div>
+        <label>Company code (6 characters — from your manager)</label>
+        <input type="text" id="reg-company" placeholder="AB12CD" maxlength="6" autocapitalize="characters" style="text-transform:uppercase;font-family:'JetBrains Mono',monospace;letter-spacing:2px">
         <label>Employee ID (7 digits — from your manager)</label>
         <input type="text" id="reg-empid" placeholder="1234567" maxlength="7" inputmode="numeric">
         <label>Invite Code (from your manager)</label>
@@ -513,6 +567,7 @@ body.fp-open .app-foot{display:none}
 
 <!-- ══ DASHBOARD (Today) ══════════════════════════════════════════ -->
 <div class="screen" id="s-dash">
+  <div id="plan-banner"></div>
   <div class="page-title">Today</div>
   <div class="page-sub" id="dash-date"></div>
   <div id="notes-alert"></div>
@@ -889,10 +944,12 @@ body.fp-open .app-foot{display:none}
       <button class="btn btn-sm btn-outline" id="at-mats" onclick="adminTab('mats')">🔩 Materials</button>
       <button class="btn btn-sm btn-outline" id="at-boxes" onclick="adminTab('boxes')">📦 Boxes</button>
       <button class="btn btn-sm btn-outline" id="at-trucks" onclick="adminTab('trucks')">🚚 Trucks</button>
+      <button class="btn btn-sm btn-outline" id="at-company" onclick="adminTab('company')">🏢 Company</button>
       <button class="btn btn-sm btn-outline" id="at-print" onclick="adminTab('print')">🖨️ Print</button>
       <button class="btn btn-sm" id="at-security" onclick="adminTab('security')" style="background:var(--red-l);color:var(--red);border-color:var(--red);border:1.5px solid">🔒 Security</button>
     </div>
     <div id="admin-sheets-view"><div id="admin-sheets-list"></div></div>
+    <div id="admin-company-view" style="display:none"></div>
     <div id="admin-trucks-view" style="display:none">
       <div class="card">
         <div style="font-size:13px;font-weight:700;margin-bottom:4px">Add truck</div>
@@ -1228,9 +1285,9 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // Firestore document config/company, which only 29 Cyber edits, in the
 // Firebase console (the security rules block every write from the app).
 // No document = the app and its printed sheets show the 29 Cyber brand.
-const APP={name:'29Cyber CrewTrack',version:'2.7.2',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'3.0.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
-  crewDomain:'crew.dgk.internal'   // crew sign-in: <Employee ID>@<crewDomain>
+  crewDomain:'crew.29cyber.internal'   // crew sign-in: <Employee ID>.<company code>@<crewDomain>
 };
 let CUSTOMER=null;  // {name, printName, phone, email, address, logoUrl} from config/company
 
@@ -1374,7 +1431,7 @@ function setLT(t){
   el('lt-admin').className='btn btn-sm '+(t==='admin'?'btn-gold':'btn-outline');
 }
 function showAuth(v){
-  ['login','register','pending','setpass','noaccess'].forEach(x=>{
+  ['login','register','pending','setpass','noaccess','signup','verify','nocompany'].forEach(x=>{
     const e=el('auth-'+x);if(e)e.style.display=x===v?'':'none';
   });
 }
@@ -1387,21 +1444,23 @@ async function doLogin(){
   if(btn){btn.textContent='Signing in…';btn.disabled=true;}
   try{
     if(loginType==='crew'){
-      const empid=el('li-empid').value.trim();
+      const empid=el('li-empid').value.trim(),ccode=normCode(el('li-company').value);
+      if(ccode.length!==6){showLiErr('Enter the 6-character company code from your manager');if(btn){btn.textContent='Sign In →';btn.disabled=false;}return;}
+      lsCompany(ccode);
       if(empid.length!==7||isNaN(empid)){
         showLiErr('Employee ID must be 7 digits');
         if(btn){btn.textContent='Sign In →';btn.disabled=false;}return;
       }
       // Build the internal email directly — no Firestore lookup needed
-      const fakeEmail=crewEmail(empid);
+      const fakeEmail=crewEmail(empid,ccode);
       try{
         const cred=await fb().signInWithEmailAndPassword(fb().auth,fakeEmail,pass);
         await afterLogin(cred.user);
       }catch(e){
         if(e.code==='auth/user-not-found'||e.code==='auth/invalid-email'){
-          showLiErr('Employee ID not registered. Contact your manager.');
+          showLiErr('Company code or Employee ID not registered. Check both with your manager.');
         }else if(e.code==='auth/wrong-password'||e.code==='auth/invalid-credential'){
-          showLiErr('Incorrect password. Please try again.');
+          showLiErr('Wrong company code, Employee ID or password.');
         }else{
           showLiErr('Error: '+e.code+' — '+e.message);
         }
@@ -1439,14 +1498,20 @@ async function doLogin(){
 //     password; the crew member sets their own password at first login.
 const CODE_CHARS='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 function genCode(n=8){const a=new Uint32Array(n);crypto.getRandomValues(a);return Array.from(a,x=>CODE_CHARS[x%CODE_CHARS.length]).join('');}
-const crewEmail=empid=>`${empid}@${COMPANY.crewDomain}`;
+// v3.0: the company code is part of every crew login, so the same Employee ID can exist in two companies.
+let TENANT=null;
+const codeNow=()=>String(TENANT?.code||'').toLowerCase();
+const crewEmail=(empid,code)=>`${empid}.${String(code||codeNow()).toLowerCase()}@${COMPANY.crewDomain}`;
+const normCode=v=>String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
+function lsCompany(v){try{if(v===undefined)return localStorage.getItem('ct_company')||'';localStorage.setItem('ct_company',v);}catch(e){return '';}}
 // Access per app: off unless a manager or the bigboss turns it on. The bigboss always has both.
 const hasApp=(u,app)=>!!u&&(u.role==='bigboss'||(u.apps&&u.apps[app]===true));
 let registering=false; // pauses the auth listener while an account is being created
 
 async function doRegister(){
   el('reg-err').style.display='none';
-  const empid=el('reg-empid').value.trim(),name=el('reg-name').value.trim().slice(0,60);
+  const empid=el('reg-empid').value.trim(),name=el('reg-name').value.trim().slice(0,60),ccode=normCode(el('reg-company').value);
+  if(ccode.length!==6){showRegErr('Enter the 6-character company code from your manager');return;}
   const code=el('reg-code').value.trim().toUpperCase(),pass=el('reg-pass').value,pass2=el('reg-pass2').value;
   if(!/^\d{7}$/.test(empid)){showRegErr('ID must be 7 digits');return;}
   if(!/^[A-Z0-9]{8}$/.test(code)){showRegErr('Enter the 8-character invite code from your manager');return;}
@@ -1459,7 +1524,7 @@ async function doRegister(){
   registering=true;
   let cred=null;
   try{
-    cred=await fb().createUserWithEmailAndPassword(fb().auth,crewEmail(empid),pass);
+    cred=await fb().createUserWithEmailAndPassword(fb().auth,crewEmail(empid,ccode),pass);
   }catch(e){
     registering=false;
     showRegErr(e.code==='auth/email-already-in-use'?'This ID already has an account. Contact your manager.':'Could not create the account. Check your connection and try again.');
@@ -1468,9 +1533,12 @@ async function doRegister(){
   try{
     // One batch: profile + ID claim are saved together or not at all.
     // The rules accept it only if the ID exists, is free and the code matches.
-    const{db,doc,writeBatch}=fb();const batch=writeBatch(db);
+    const cd=await fbGet(`codes/${ccode}`);if(!cd||!cd.tid)throw new Error('company code');
+    fb().setTenant(cd.tid);lsCompany(ccode);
+    const{db,doc,writeBatch,serverTimestamp}=fb();const batch=writeBatch(db);
+    batch.set(doc(db,'members',cred.user.uid),{tid:cd.tid,createdAt:serverTimestamp()});
     batch.set(doc(db,'users',cred.user.uid),{
-      name,empId:empid,email:crewEmail(empid),role:'crew',
+      name,empId:empid,email:crewEmail(empid,ccode),role:'crew',
       status:'pending',inviteCode:code,
       registeredAt:new Date().toISOString()
     });
@@ -1486,7 +1554,8 @@ async function doRegister(){
     // Wrong ID or code: remove the half-created login so the ID stays free.
     try{await cred.user.delete();}catch(_){try{await fb().signOut(fb().auth);}catch(__){}}
     registering=false;
-    showRegErr('Employee ID or invite code is not valid. Check both with your manager.');
+    fb().setTenant(null);
+    showRegErr('Company code, Employee ID or invite code is not valid, or the company trial has ended. Check with your manager.');
     reset();
   }
 }
@@ -1514,7 +1583,8 @@ async function createCrewAccount(){
     newUser=(await F.createUserWithEmailAndPassword(tmpAuth,crewEmail(empid),pass)).user;
     const now=new Date().toISOString();
     // One batch: profile + Employee ID are saved together or not at all.
-    const{db,doc,writeBatch}=F;const batch=writeBatch(db);
+    const{db,doc,writeBatch,serverTimestamp}=F;const batch=writeBatch(db);
+    batch.set(doc(db,'members',newUser.uid),{tid:F.tenant(),createdAt:serverTimestamp()});
     batch.set(doc(db,'users',newUser.uid),{
       name,empId:empid,email:crewEmail(empid),role:'crew',status:'approved',
       mustChangePassword:true,registeredAt:now,
@@ -1530,7 +1600,7 @@ async function createCrewAccount(){
     if(el('cc-app-ct'))el('cc-app-ct').checked=false;if(el('cc-app-fp'))el('cc-app-fp').checked=false;
     await syncPeople();
     toast(`✅ Account created for ${name}`);
-    alert(`Account created.\n\nEmployee ID: ${empid}\nTemporary password: ${pass}\n\nGive these to ${name}. The app will ask for a new password at first sign-in.`);
+    alert(`Account created.\n\nCompany code: ${TENANT?.code||''}\nEmployee ID: ${empid}\nTemporary password: ${pass}\n\nGive these to ${name}. The app will ask for a new password at first sign-in.`);
     buildAdminUsers();
   }catch(e){
     if(newUser){try{await newUser.delete();}catch(_){}}
@@ -1563,6 +1633,93 @@ async function doSetPassword(){
   }finally{btn.disabled=false;btn.textContent='Save Password →';}
 }
 
+// ═══════════════════════ COMPANY (v3.0) ═══════════════════════
+// Trial: 21 days from the creation time stamped by the server (the rules count it).
+function trialInfo(){if(!TENANT)return null;if(TENANT.plan==='active')return{active:true};
+  const start=TENANT.createdAt?tsDate(TENANT.createdAt):null;if(!start||isNaN(start))return{closed:true};
+  const end=TENANT.trialEndsAt?tsDate(TENANT.trialEndsAt):new Date(start.getTime()+21*864e5),left=Math.ceil((end-Date.now())/864e5);
+  return left>0?{trial:true,left,end}:{closed:true,end};}
+function renderPlanBanner(){
+  const b=el('plan-banner');if(!b)return;
+  const i=trialInfo();
+  b.innerHTML=!session||!i||i.active?'':i.trial?`<div class="alert a-info" style="margin-bottom:12px"><span class="ai">⏳</span><div>Free trial: <b>${i.left} day${i.left>1?'s':''} left</b>. Company code <b style="font-family:'JetBrains Mono',monospace">${h(TENANT.code||'')}</b>.</div></div>`
+    :`<div class="alert a-err" style="margin-bottom:12px"><span class="ai">🔒</span><div><b>Trial ended: read-only.</b> Your records and PDFs stay available. To keep working, contact 29 Cyber.</div></div>`;
+}
+function showSuErr(m){el('su-err').style.display='flex';el('su-err-msg').textContent=m;}
+let pendingCompany=null;
+function startCompanyFromLogin(){const u=fb().auth.currentUser;showAuth('signup');if(u&&u.email){el('su-email').value=u.email;}}
+async function doSignupCompany(){
+  el('su-err').style.display='none';
+  const company=el('su-company').value.trim().slice(0,120),name=el('su-name').value.trim().slice(0,80),email=el('su-email').value.trim().toLowerCase(),p1=el('su-pass').value,p2=el('su-pass2').value;
+  if(!company){showSuErr('Enter the company name');return;}
+  if(!name){showSuErr('Enter your name');return;}
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){showSuErr('Enter a valid email');return;}
+  const cur=fb().auth.currentUser;
+  if(!(cur&&cur.email===email)){
+    if(p1.length<10){showSuErr('Password: at least 10 characters');return;}
+    if(p1!==p2){showSuErr('Passwords do not match');return;}
+  }
+  const btn=el('su-btn');btn.disabled=true;btn.textContent='Creating…';
+  pendingCompany={company,name};try{sessionStorage.setItem('ct_pending_company',JSON.stringify(pendingCompany));}catch(e){}
+  try{
+    registering=true;
+    const user=cur&&cur.email===email?cur:(await fb().createUserWithEmailAndPassword(fb().auth,email,p1)).user;
+    if(!user.emailVerified)await fb().sendEmailVerification(user);
+    registering=false;
+    el('verify-email').textContent=email;showAuth('verify');
+    if(user.emailVerified)finishCompanySignup();
+  }catch(e){registering=false;showSuErr(e.code==='auth/email-already-in-use'?'This email already has a login. Sign in with it (Manager / Boss), then start your company.':e.code==='auth/operation-not-allowed'?'Sign-ups are closed right now.':'Could not create the account. Check your connection.');}
+  finally{btn.disabled=false;btn.textContent='Create account →';}
+}
+async function resendVerify(){const u=fb().auth.currentUser;if(!u)return;try{await fb().sendEmailVerification(u);toast('📧 Link sent again');}catch(e){toast('Wait a minute and try again',true);}}
+function genCompanyCode(){const a=new Uint32Array(6);crypto.getRandomValues(a);return Array.from(a,x=>'ABCDEFGHJKMNPQRSTUVWXYZ23456789'[x%31]).join('');}
+async function finishCompanySignup(){
+  const box=el('verify-err');box.style.display='none';const fail=m=>{el('verify-err-msg').textContent=m;box.style.display='flex';};
+  const u=fb().auth.currentUser;if(!u){showAuth('login');return;}
+  if(!pendingCompany){try{pendingCompany=JSON.parse(sessionStorage.getItem('ct_pending_company')||'null');}catch(e){}}
+  if(!pendingCompany){showAuth('signup');el('su-email').value=u.email||'';return;}
+  const btn=el('verify-btn');btn.disabled=true;btn.textContent='Checking…';
+  try{
+    await u.reload();
+    if(!fb().auth.currentUser.emailVerified){fail('Not confirmed yet. Open the link in the email we sent, then tap Continue.');return;}
+    await u.getIdToken(true);   // the rules read email_verified from a fresh token
+    let ok=false,last=null;
+    for(let i=0;i<4&&!ok;i++){
+      const tid=newId(),code=genCompanyCode(),F=fb(),{db,doc,writeBatch,serverTimestamp}=F,now=serverTimestamp(),b=writeBatch(db);
+      F.setTenant(tid);
+      b.set(doc(db,'tenants',tid),{name:pendingCompany.company,code,plan:'trial',ownerUid:u.uid,ownerEmail:u.email,createdAt:now});
+      b.set(doc(db,'codes',code),{tid});
+      b.set(doc(db,'members',u.uid),{tid,createdAt:now});
+      b.set(doc(db,'users',u.uid),{name:pendingCompany.name,email:u.email,role:'bigboss',status:'approved',registeredAt:new Date().toISOString(),apps:{crewtrack:true,fieldproof:true}});
+      b.set(doc(db,'config','company'),{name:pendingCompany.company,printName:pendingCompany.company,phone:'',email:'',address:''});
+      b.set(doc(db,'trialEmails',String(u.email).toLowerCase()),{tid,at:now});
+      try{await b.commit();ok=true;lsCompany(code);}catch(e){last=e;F.setTenant(null);}
+    }
+    if(!ok){fail(last&&last.code==='permission-denied'?'This email already used its free trial, or already belongs to a company. Contact 29 Cyber.':'Could not create the company. Check your connection and try again.');return;}
+    try{sessionStorage.removeItem('ct_pending_company');}catch(e){}
+    pendingCompany=null;session=null;await afterLogin(fb().auth.currentUser);
+    toast('🎉 Company created: 21-day trial started');
+  }catch(e){console.log(e);fail('Could not continue. Try again.');}
+  finally{btn.disabled=false;btn.textContent='I confirmed it, continue →';}
+}
+// Admin › Company: the bigboss edits the header printed on every sheet.
+async function buildCompanyTab(){
+  const v=el('admin-company-view');if(!v)return;const c=await fbGet('config/company').catch(()=>null)||{},i=trialInfo()||{};
+  v.innerHTML=`<div class="card"><div style="font-size:13px;font-weight:700;margin-bottom:4px">Company</div>
+    <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">Company code (crew sign-in): <b style="font-family:'JetBrains Mono',monospace;font-size:14px">${h(TENANT?.code||'—')}</b> · Plan: ${i.active?'Active':i.trial?`Trial, ${i.left} day${i.left>1?'s':''} left`:'Trial ended (read-only)'}</div>
+    ${session?.role==='bigboss'?`<label>Company name</label><input id="co-name" maxlength="120" value="${h(c.name||'')}">
+    <label>Name on printed sheets</label><input id="co-print" maxlength="120" value="${h(c.printName||'')}">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div><label>Phone</label><input id="co-phone" maxlength="40" value="${h(c.phone||'')}"></div><div><label>Email</label><input id="co-email" type="email" maxlength="120" value="${h(c.email||'')}"></div></div>
+    <label>Address</label><input id="co-address" maxlength="200" value="${h(c.address||'')}">
+    <div style="font-size:12px;color:var(--ink3);margin-top:6px">Signed records keep the header they were signed with.</div>
+    <button class="btn btn-gold btn-full" style="margin-top:10px" onclick="saveCompany()">Save</button>`:'<div style="font-size:13px;color:var(--ink3)">Only the company owner (bigboss) edits these details.</div>'}</div>`;
+}
+async function saveCompany(){
+  const g=id=>el(id).value.trim(),d={name:g('co-name').slice(0,120),printName:g('co-print').slice(0,120),phone:g('co-phone').slice(0,40),email:g('co-email').slice(0,120),address:g('co-address').slice(0,200)};
+  if(!d.name){toast('Enter the company name',true);return;}
+  try{await fbSet('config/company',d);await writeAuditLog({type:'company_header_changed'}).catch(()=>{});await loadCompany();toast('✓ Saved');}catch(e){toast(e.code==='permission-denied'?'Not allowed (trial ended, or not the owner)':'Could not save',true);}
+}
+
 function showLiErr(m){el('li-err').style.display='flex';el('li-err-msg').textContent=m;}
 // Was called but never defined (it threw on the pending-account path).
 function resetLoginBtn(){const b=el('li-signin-btn');if(b){b.textContent='Sign In →';b.disabled=false;}}
@@ -1582,6 +1739,18 @@ async function _afterLogin(user){
     showScreen('s-dash'); return;
   }
   try{
+    // v3.0: which company this login belongs to, then its record (plan, trial, code).
+    const mem=await fbGet(`members/${user.uid}`).catch(()=>null);
+    if(!mem||!mem.tid){
+      fb().setTenant(null);TENANT=null;showScreen('s-auth');
+      if(user.email&&!String(user.email).endsWith('@'+COMPANY.crewDomain)){
+        if(!user.emailVerified){el('verify-email').textContent=user.email;showAuth('verify');}else showAuth('nocompany');
+      }else{await fb().signOut(fb().auth);showLiErr('This login is not part of a company.');}
+      resetLoginBtn();return;
+    }
+    fb().setTenant(mem.tid);
+    TENANT={tid:mem.tid,...(await fbGet(`tenants/${mem.tid}`).catch(()=>null)||{})};
+    if(TENANT.code)lsCompany(TENANT.code);
     const profile=await fbGet(`users/${user.uid}`);
     if(!profile){await fb().signOut(fb().auth);return;}
     // Block pending users — awaiting manager approval
@@ -1610,6 +1779,7 @@ async function _afterLogin(user){
     el('tb-role').textContent=ROLES[session.role]||session.role;
     document.body.classList.add('authed');
     el('side-name').textContent=session.name;el('side-role').textContent=ROLES[session.role]||session.role;
+    renderPlanBanner();
     if(session.role==='manager'||session.role==='bigboss'){
       el('bn-admin').style.display='flex';
     } else {
@@ -1648,7 +1818,7 @@ async function _afterLogin(user){
 
 async function doLogout(){
   {const f=el('fp-frame');if(f)f.removeAttribute('src');document.body.classList.remove('fp-open');}
-  stopNotesWatch();session=null;CUSTOMER=null;applyBrand();todayLoad=null;todayJobs=[];crewList=[];pickedCrew=[];PEOPLE=[];myActive=null;selColors=[];extraMats=[];fpItems=[];recipients=[];
+  stopNotesWatch();session=null;CUSTOMER=null;TENANT=null;try{fb().setTenant(null);}catch(e){}renderPlanBanner();applyBrand();todayLoad=null;todayJobs=[];crewList=[];pickedCrew=[];PEOPLE=[];myActive=null;selColors=[];extraMats=[];fpItems=[];recipients=[];
   try{await fb().signOut(fb().auth);}catch(e){}
   document.body.classList.remove('authed','nav-open');
   if(el('bell-btn'))el('bell-btn').style.display='none';
@@ -3293,7 +3463,7 @@ function buildAdminPanel(){
 }
 
 function adminTab(tab){
-  ['sheets','users','ids','mats','boxes','trucks','print','security'].forEach(t=>{
+  ['sheets','users','ids','mats','boxes','trucks','company','print','security'].forEach(t=>{
     const v=el('admin-'+t+'-view');if(v)v.style.display=t===tab?'':'none';
     const b=el('at-'+t);
     if(b){
@@ -3312,6 +3482,7 @@ function adminTab(tab){
   if(tab==='mats')buildMgrMats();
   if(tab==='boxes')buildBoxes();
   if(tab==='trucks')buildTrucks();
+  if(tab==='company')buildCompanyTab();
   if(tab==='print')buildPrintSelector();
 }
 
@@ -3497,7 +3668,7 @@ async function approveUser(fid,name){
 // again with the old one. Their login stays in Firebase Authentication (deleting a
 // login needs a server); delete it there before giving the same ID to someone else.
 async function releaseUser(fid,empId){
-  await fbDel(`users/${fid}`);
+  {const{db,doc,writeBatch}=fb();const b=writeBatch(db);b.delete(doc(db,'users',fid));b.delete(doc(db,'members',fid));await b.commit();}
   if(empId){
     try{await fbUpdate(`employeeIds/${empId}`,{used:false,assignedTo:'',assignedUid:'',inviteCode:genCode(8)});}
     catch(e){if(e.code!=='not-found')throw e;}
@@ -3505,7 +3676,7 @@ async function releaseUser(fid,empId){
   await writeAuditLog({type:'crew_account_removed',targetUid:fid,empId:empId||''});
   await syncPeople();
 }
-const LOGIN_NOTE=n=>`\n\nTo reuse this Employee ID for someone else, also delete the login ${n}@${COMPANY.crewDomain} in Firebase Console > Authentication.`;
+const LOGIN_NOTE=n=>`\n\nTo reuse this Employee ID for someone else, also delete the login ${crewEmail(n)} in Firebase Console > Authentication.`;
 async function rejectUser(fid,name,empId){
   if(!confirm(`Reject ${name}? This deletes their profile and frees the Employee ID with a new invite code.`+(empId?LOGIN_NOTE(empId):'')))return;
   try{
@@ -4215,6 +4386,7 @@ function sendVia(method){
 
 // ═══════════════════════ INIT ════════════════════════════════════
 applyBrand();
+{const c=lsCompany();if(c){if(el('li-company'))el('li-company').value=c;if(el('reg-company'))el('reg-company').value=c;}}
 document.addEventListener('fbReady',()=>{
   const{auth,onAuthStateChanged}=fb();
   onAuthStateChanged(auth,async user=>{

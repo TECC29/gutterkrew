@@ -147,7 +147,7 @@ import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
 import { getFirestore, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc,
   collection, query, where, orderBy, serverTimestamp, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-// Same Firebase project as CrewTrack (one project per company).
+// Same Firebase project as CrewTrack. v3.0: one project, many companies (tenants).
 const firebaseConfig = {
   apiKey:            "AIzaSyAwVnecu92kAbnuuReZcmF7-6HhEAdlfV8",
   authDomain:        "gutter-crew.firebaseapp.com",
@@ -159,8 +159,19 @@ const firebaseConfig = {
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+// v3.0: every path lives inside the signed-in user's company (tenants/{tid}/...).
+const GLOBAL = new Set(['tenants', 'members', 'codes', 'trialEmails']);
+let TID = null;
+const inTenant = segs => {
+  const s = segs.length === 1 ? String(segs[0]).split('/') : segs;
+  if (GLOBAL.has(String(s[0]))) return s;
+  if (!TID) throw Object.assign(new Error('No company selected'), { code: 'no-tenant' });
+  return ['tenants', TID, ...s];
+};
 window._fb = { auth, db, signInWithEmailAndPassword, signOut, onAuthStateChanged,
-  doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc, collection, query, where, orderBy, serverTimestamp, writeBatch };
+  doc: (d, ...g) => doc(d, ...inTenant(g)), setDoc, getDoc, getDocs, updateDoc, deleteDoc,
+  collection: (d, ...g) => collection(d, ...inTenant(g)), query, where, orderBy, serverTimestamp, writeBatch,
+  setTenant: t => { TID = t || null; }, tenant: () => TID };
 window._fbReady = true;
 document.dispatchEvent(new Event('fbReady'));
 </script>
@@ -267,8 +278,15 @@ function arm(b,fn){if(b.dataset.armed==='1'){fn();return}b.dataset.armed='1';con
 // fpSites/{id}           site visit (type 'visit', author + managers only) or job (type 'job', managers create)
 // fpSites/{id}/proofs     one signed verification per building version (locked once signed)
 // fpSites/{id}/photos     compressed site photos (immutable)
-const APP={name:'29Cyber FieldProof',version:'2.2.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
-const COMPANY={crewDomain:'crew.dgk.internal'};
+const APP={name:'29Cyber FieldProof',version:'3.0.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const COMPANY={crewDomain:'crew.29cyber.internal'};
+let TENANT=null;
+const normCode=v=>String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
+function lsCompany(v){try{if(v===undefined)return localStorage.getItem('ct_company')||'';localStorage.setItem('ct_company',v);}catch(e){return '';}}
+// Trial: 21 days from the creation time stamped by the server (the rules enforce it).
+function planInfo(){if(!TENANT)return null;if(TENANT.plan==='active')return{active:true};const st=TENANT.createdAt?tsDate(TENANT.createdAt):null;if(!st||isNaN(st))return{closed:true};
+  const end=TENANT.trialEndsAt?tsDate(TENANT.trialEndsAt):new Date(st.getTime()+21*864e5),left=Math.ceil((end-Date.now())/864e5);return left>0?{trial:true,left}:{closed:true};}
+const planBar=()=>{const i=planInfo();return !i||i.active?'':i.trial?`<p class="hint" style="margin:0 0 10px">Free trial: ${i.left} day${i.left>1?'s':''} left.</p>`:`<p class="banner gray" style="margin:0 0 10px">Trial ended: read-only. Your signed records and PDFs stay available. Contact 29 Cyber to keep working.</p>`;};
 const L={en:Object.assign({newJob:"New job",editJob:"Job details",jobs:"Jobs",noJobs:"No jobs yet. Create the first one when you reach the site.",duplicate:"Duplicate layout",del:"Delete",confirm:"Confirm",address:"Address",condo:"Community",wo:"Work order",bldg:"Building #",model:"Building model",supervisor:"Supervisor",installer:"Installer (you)",notes:"Job notes",gpsBtn:"Capture GPS",gpsNone:"GPS not captured (optional)",gpsWait:"Getting position…",gpsFail:"GPS isn't available here. The address fields are enough.",dictHint:"Tip: use the keyboard mic to dictate.",saveForm:"Save and build",back:"Back",details:"Details",addPhoto:"Photo",photo:"Photo",photoName:"Photo name",delPhoto:"Delete photo",zoom:"Zoom",emptyPhoto:"Take or choose the first photo of the site.",bom:"Materials",bomEmpty:"No pieces placed.",review:"Review and sign",viewDoc:"View document",locked:"Job signed. The layout is locked.",flip:"Flip",size:"Size",arrow:"Arrow",qty:"Qty",otherName:"Material name",noteP:"Piece note",remove:"Remove piece",close:"Close",summary:"Summary",pieceNotes:"Piece notes",none:"None",supSig:"Supervisor signature",instSig:"Your signature",name:"Name",clear:"Clear",finalize:"Sign and finalize",stmt:"The supervisor confirms the downspout locations, elbows, drains, splash blocks and materials in this document are what was requested for this building.",needWo:"Fill in work order and building number.",needAddr:"Fill in the address or the community.",needSig:"Both names and both signatures are required.",needPieces:"Place at least one piece before signing.",signedAt:"Signed",integrity:"Integrity code (SHA-256)",pdf:"Download PDF",email:"Open email",pdfMaking:"Building PDF…",pdfOk:"PDF saved. Attach it to the email.",pdfNo:"Downloads aren't available in this view.",pdfErr:"The PDF couldn't be built.",bossEmail:"Boss email (for sending)",storeWarn:"This browser didn't allow saving on the device. Jobs are lost when the page closes.",draft:"Draft",signed:"Signed",other:"Other material",drain:"Drain",yourName:"Your name",enter:"Sign in",contAs:"Continue as",switchU:"Switch user",testMode:"Test mode: sign in without a password.",tagline:"Installation locations, verified and signed on site.",logout:"Sign out",needName:"Enter your name to sign in.",curColor:"Current color (next pieces)",colorPh:"e.g. white, brown",color:"Color",kickerEl:"Kicker elbows",note:"Free text",noteText:"Text",photoNotes:"Text on photos",textPh:"Write here"},{
   tagline:"Installation locations, verified and signed on site.",
   supSig:"Site supervisor signature",instSig:"Your signature",supervisor:"Site supervisor",installer:"Verified by (you)",
@@ -327,7 +345,7 @@ function gate(msg){
   ${LOGO_SVG}<h1 class="appname"><span class="b">29Cyber</span> FieldProof</h1><p class="tag">${t('tagline')}</p>
   <div class="lform">
    <div class="two"><button class="btn sm ${loginType==='crew'?'vis':'line'}" data-act="lt" data-t="crew">Employee ID</button><button class="btn sm ${loginType==='admin'?'vis':'line'}" data-act="lt" data-t="admin">Email</button></div>
-   ${loginType==='crew'?`<label class="f" for="lid">Employee ID (7 digits)</label><input id="lid" inputmode="numeric" maxlength="7" autocomplete="username">`
+   ${loginType==='crew'?`<label class="f" for="lco">Company code</label><input id="lco" maxlength="6" autocapitalize="characters" value="${esc(lsCompany())}" style="text-transform:uppercase;letter-spacing:2px"><label class="f" for="lid">Employee ID (7 digits)</label><input id="lid" inputmode="numeric" maxlength="7" autocomplete="username">`
      :`<label class="f" for="lid">Email</label><input id="lid" type="email" autocomplete="username">`}
    <label class="f" for="lpw">Password</label><input id="lpw" type="password" autocomplete="current-password">
    <p id="lerr" class="err" role="alert">${esc(msg||'')}</p>
@@ -339,15 +357,20 @@ async function doLogin(){
   const id=($('#lid').value||'').trim(),pw=$('#lpw').value||'',err=$('#lerr');
   if(!id||!pw){err.textContent='Enter your login and password.';return}
   if(loginType==='crew'&&!/^\d{7}$/.test(id)){err.textContent='The Employee ID has 7 digits.';return}
-  const email=loginType==='crew'?`${id}@${COMPANY.crewDomain}`:id;
+  let email=id;
+  if(loginType==='crew'){const cc=normCode($('#lco')&&$('#lco').value);if(cc.length!==6){err.textContent='Enter the 6-character company code.';return}lsCompany(cc);email=`${id}.${cc.toLowerCase()}@${COMPANY.crewDomain}`;}
   const b=$('#lbtn');b.disabled=true;b.textContent='Signing in…';
   try{await fb().signInWithEmailAndPassword(fb().auth,email,pw);}
-  catch(e){b.disabled=false;b.textContent='Sign in';err.textContent='Wrong login or password.';}
+  catch(e){b.disabled=false;b.textContent='Sign in';err.textContent=loginType==='crew'?'Wrong company code, Employee ID or password.':'Wrong login or password.';}
 }
 function notice(icon,title,text,extra=''){
   app.innerHTML=`<section class="gate">${LOGO_SVG}<div class="lform" style="text-align:center"><div style="font-size:40px">${icon}</div><h2 style="margin:6px 0">${esc(title)}</h2><p class="tag" style="margin:0 auto 18px">${text}</p>${extra}<button class="btn line big" data-act="logout">Sign out</button></div>${foot()}</section>`;}
 async function onUser(user){
-  if(!user){session=null;gate();return}
+  if(!user){session=null;TENANT=null;fb().setTenant(null);gate();return}
+  // v3.0: the company of this login first.
+  const mem=await fbGet(`members/${user.uid}`).catch(()=>null);
+  if(!mem||!mem.tid){fb().setTenant(null);notice('🏢','No company','This login is not part of a company. Start one in CrewTrack, or ask your manager to add you.',`<a class="btn vis big" href="../index.html">Open CrewTrack</a>`);return}
+  fb().setTenant(mem.tid);TENANT={tid:mem.tid,...(await fbGet(`tenants/${mem.tid}`).catch(()=>null)||{})};if(TENANT.code)lsCompany(TENANT.code);
   let p=null;try{p=await fbGet(`users/${user.uid}`);}catch(e){}
   if(!p){notice('⚠️','No profile','This login has no profile. Ask your manager.');return}
   if(p.status==='pending'){notice('⏳','Waiting for approval',`Hi ${esc(p.name)}. Your account is waiting for your manager's approval.`);return}
@@ -397,7 +420,7 @@ async function home(tab){
      <div class="jt">${s.type==='job'?'WO '+esc(s.wo)+' · ':''}${esc(s.condo||s.address||'(no address)')}</div>
      <div class="js">${s._link?`<b>Your truck ${esc(s._link.truck)} · work order ${esc(s._link.wo)}</b> · `:''}${s.client?'For '+esc(s.client.name)+' · ':''}${s.type==='visit'?esc(KIND[s.kind]||'Site visit')+' · ':''}${esc(s.address&&s.condo?s.address:'')}${homeTab==='all'?' · '+esc(s.ownerName||''):''}${isMgr()&&s.type==='job'?' · Crew: '+((s.crewUids||[]).length||'none'):''} · ${fmt(s.createdAt)}</div></div>
      <span class="pill ${esc(s.status)}">${esc(STATUS[s.status]||s.status)}</span></article>`;
-  $('.wrap').innerHTML=`<div class="acts" style="margin-top:0">${isMgr()?`<button class="btn vis" data-act="newSite" data-t="job">+ New job</button>`:''}<button class="btn ${isMgr()?'':'vis'}" data-act="newSite" data-t="visit">+ New site visit</button></div>
+  $('.wrap').innerHTML=planBar()+`<div class="acts" style="margin-top:0">${isMgr()?`<button class="btn vis" data-act="newSite" data-t="job">+ New job</button>`:''}<button class="btn ${isMgr()?'':'vis'}" data-act="newSite" data-t="visit">+ New site visit</button></div>
    <div class="tabs" style="margin-top:16px">${tabs.map(([k,n,c])=>`<button class="tab ${k===homeTab?'on':''}" data-act="tab" data-t="${k}">${n} (${c})</button>`).join('')}</div>
    ${list.length?list.map(row).join(''):`<p class="empty">${homeTab==='jobs'?(isMgr()?'No jobs yet. Create one, or open a site visit and turn it into a job.':'No jobs for you yet. Your manager assigns the jobs'+(hasApp(session,'crewtrack')&&WOLINK?', or type the work order number in CrewTrack when you load the truck.':'.')):'No site visits yet. Start one when you reach a site.'}</p>`}
    ${isMgr()&&homeTab==='jobs'?`<div class="selbox" style="margin-top:22px"><label class="chk"><input type="checkbox" id="woLink" ${WOLINK?'checked':''}> Crew can open a job by typing its work order number</label><p class="hint">In CrewTrack, while they are on an open load. Each link is recorded on the job. Turn this off if your work order numbers are easy to guess; assigning crew to a job always works.</p><p id="wlmsg" class="msg" role="status"></p></div>`:''}
