@@ -282,7 +282,7 @@ function arm(b,fn){if(b.dataset.armed==='1'){fn();return}b.dataset.armed='1';con
 // fpSites/{id}           site visit (type 'visit', author + managers only) or job (type 'job', managers create)
 // fpSites/{id}/proofs     one signed verification per building version (locked once signed)
 // fpSites/{id}/photos     compressed site photos (immutable)
-const APP={name:'29Cyber FieldProof',version:'3.1.2',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber FieldProof',version:'3.1.3',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={crewDomain:'crew.29cyber.internal'};
 let TENANT=null;
 const normCode=v=>String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
@@ -624,19 +624,35 @@ function skRows(s){const r=skTotals(s),o=[],ft=x=>Math.round(x*10)/10+' ft',
  add('New gutter',r.n,ft);add('Existing gutter (stays)',r.e,ft);add('Leaf Guard',r.lg,ft);add('Cleaning',r.cl,ft);add('Downspouts',r.ds,String);
  SKEL.forEach(k=>{if(r.el[k])o.push(['Elbow '+k,String(r.el[k])])});return o}
 function skTable(s){const r=skRows(s);return r.length?`<table class="bom">${r.map(x=>`<tr><td>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join('')}</table>`:`<p class="hint">Nothing drawn yet.</p>`}
-const SKLEG='Solid line: new gutter · Dashed line: existing gutter that stays · Double line: 2 stories · Green dots + LG: Leaf Guard · CL: cleaning · (x) downspout, letters = elbows, arrow = where the water goes';
+const SKLEG='Solid line: new gutter · Dashed line: existing gutter that stays · Double line: 2 stories · Green dots: Leaf Guard · Thin red line: cleaning · (x) downspout, letters = elbows, arrow = where the water goes';
 // One drawing for the editor, the review page, the crew and the PDF. edit=true adds the grid and tap targets.
 const skN=v=>{const n=+v;return Number.isFinite(n)?Math.round(Math.max(-SKW,Math.min(2*SKW,n))*10)/10:0};
 function skSVG(s,edit){const sel=edit?skSel:null;let o=`<defs><marker id="skar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#111"/></marker>${edit&&s.snap?`<pattern id="skg" width="${SKG}" height="${SKG}" patternUnits="userSpaceOnUse"><path d="M${SKG} 0H0V${SKG}" fill="none" stroke="#dde2e8" stroke-width="1"/></pattern>`:''}</defs><rect width="${SKW}" height="${SKH}" fill="#fff"/>${edit&&s.snap?`<rect width="${SKW}" height="${SKH}" fill="url(#skg)"/>`:''}`;
- (s.w||[]).forEach((w0,i)=>{const w={a:[skN((w0.a||[])[0]),skN((w0.a||[])[1])],b:[skN((w0.b||[])[0]),skN((w0.b||[])[1])],l:skN(w0.l),t:w0.t==='e'?'e':'n',f:skFloors(w0.f),s:(Array.isArray(w0.s)?w0.s:[]).filter(k=>k in SKSV)},on=sel&&sel.t==='w'&&sel.i===i,c=on?'#1f6fd1':'#111';
-  {const dx=w.b[0]-w.a[0],dy=w.b[1]-w.a[1],L=Math.hypot(dx,dy)||1,ux=-dy/L,uy=dx/L,dash=w.t==='e'?' stroke-dasharray="20 14"':'',ln=(k,sw)=>`<line x1="${(w.a[0]+ux*k).toFixed(1)}" y1="${(w.a[1]+uy*k).toFixed(1)}" x2="${(w.b[0]+ux*k).toFixed(1)}" y2="${(w.b[1]+uy*k).toFixed(1)}" stroke="${c}" stroke-width="${sw}" stroke-linecap="round"${dash}/>`;
-   if(w.s.includes('lg')){const k=w.f===2?-24:-17;o+=`<line x1="${(w.a[0]+ux*k).toFixed(1)}" y1="${(w.a[1]+uy*k).toFixed(1)}" x2="${(w.b[0]+ux*k).toFixed(1)}" y2="${(w.b[1]+uy*k).toFixed(1)}" stroke="#2E9D4F" stroke-width="7" stroke-linecap="round" stroke-dasharray="1 13"/>`}
-   o+=w.f===2?ln(-7,on?5:4)+ln(7,on?5:4):ln(0,on?7:5)}
+ // Normalized walls. "Inside" = the side facing the middle of the drawing, so Leaf Guard and
+ // cleaning always sit inside the house line and the length always outside, whatever the
+ // direction the line was drawn. Parallel lines (2 stories, Leaf Guard, cleaning) are
+ // mitered at shared corners so they meet.
+ const W=(s.w||[]).map(w0=>({a:[skN((w0.a||[])[0]),skN((w0.a||[])[1])],b:[skN((w0.b||[])[0]),skN((w0.b||[])[1])],l:skN(w0.l),t:w0.t==='e'?'e':'n',f:skFloors(w0.f),s:(Array.isArray(w0.s)?w0.s:[]).filter(k=>k in SKSV)}));
+ let cx=0,cy=0;W.forEach(w=>{cx+=w.a[0]+w.b[0];cy+=w.a[1]+w.b[1]});if(W.length){cx/=2*W.length;cy/=2*W.length}
+ W.forEach(w=>{const dx=w.b[0]-w.a[0],dy=w.b[1]-w.a[1],L=Math.hypot(dx,dy)||1;let ux=-dy/L,uy=dx/L;const mx=(w.a[0]+w.b[0])/2,my=(w.a[1]+w.b[1])/2;if((cx-mx)*ux+(cy-my)*uy<0){ux=-ux;uy=-uy}w.u=[ux,uy];w.L=L});
+ const same=(p,q)=>Math.abs(p[0]-q[0])<0.5&&Math.abs(p[1]-q[1])<0.5;
+ const cross=(p1,d1,p2,d2)=>{const den=d1[0]*d2[1]-d1[1]*d2[0];if(Math.abs(den)<1e-6)return null;const t=((p2[0]-p1[0])*d2[1]-(p2[1]-p1[1])*d2[0])/den;return[p1[0]+d1[0]*t,p1[1]+d1[1]*t]};
+ // End point of wall i's parallel line at distance k (inside > 0), mitered with a wall sharing that corner.
+ const endAt=(i,k,end)=>{const w=W[i],P=end?w.b:w.a,base=[P[0]+w.u[0]*k,P[1]+w.u[1]*k];if(!k)return base;
+  for(let j=0;j<W.length;j++){if(j===i)continue;const v=W[j];if(!(same(v.a,P)||same(v.b,P)))continue;
+   const m=cross(base,[w.b[0]-w.a[0],w.b[1]-w.a[1]],[v.a[0]+v.u[0]*k,v.a[1]+v.u[1]*k],[v.b[0]-v.a[0],v.b[1]-v.a[1]]);
+   if(m&&Math.hypot(m[0]-base[0],m[1]-base[1])<=Math.abs(k)*4)return m;}
+  return base};
+ const seg=(i,k,attr)=>{const A=endAt(i,k,0),B=endAt(i,k,1);return`<line x1="${A[0].toFixed(1)}" y1="${A[1].toFixed(1)}" x2="${B[0].toFixed(1)}" y2="${B[1].toFixed(1)}" ${attr}/>`};
+ W.forEach((w,i)=>{const on=sel&&sel.t==='w'&&sel.i===i,c=on?'#1f6fd1':'#111',dash=w.t==='e'?' stroke-dasharray="20 14"':'',two=w.f===2,base=two?5:0;
+  if(w.s.includes('lg'))o+=seg(i,base+15,'stroke="#2E9D4F" stroke-width="7" stroke-linecap="round" stroke-dasharray="1 13"');
+  if(w.s.includes('cl'))o+=seg(i,base+(w.s.includes('lg')?27:13),'stroke="#D23B30" stroke-width="2.5" stroke-linecap="round"');
+  o+=two?seg(i,-5,`stroke="${c}" stroke-width="${on?4.5:3.5}" stroke-linecap="square"${dash}`)+seg(i,5,`stroke="${c}" stroke-width="${on?4.5:3.5}" stroke-linecap="square"${dash}`)
+        :seg(i,0,`stroke="${c}" stroke-width="${on?7:5}" stroke-linecap="round"${dash}`);
   if(edit)o+=`<line data-sw="${i}" x1="${w.a[0]}" y1="${w.a[1]}" x2="${w.b[0]}" y2="${w.b[1]}" stroke="transparent" stroke-width="60" style="cursor:pointer"/>`;
-  const mx=(w.a[0]+w.b[0])/2,my=(w.a[1]+w.b[1])/2,dx=w.b[0]-w.a[0],dy=w.b[1]-w.a[1],L=Math.hypot(dx,dy)||1,nx=-dy/L*34,ny=dx/L*34;
-  const tag=w.s.map(k=>k==='lg'?'<tspan fill="#2E9D4F"> LG</tspan>':' CL').join('');
+  const mx=(w.a[0]+w.b[0])/2,my=(w.a[1]+w.b[1])/2,dx=w.b[0]-w.a[0],dy=w.b[1]-w.a[1],nx=-w.u[0]*34,ny=-w.u[1]*34;
   const side=Math.abs(dx)<Math.abs(dy)?(nx>0?'start':'end'):'middle';
-  o+=`<text${edit?` data-sw="${i}" style="cursor:pointer"`:''} x="${(mx+nx).toFixed(1)}" y="${(my+ny+13).toFixed(1)}" text-anchor="${side}" font-family="Arial,sans-serif" font-size="38" font-weight="700" fill="${c}" stroke="#fff" stroke-width="7" paint-order="stroke">${w.l?esc(String(w.l))+"'":'?'}${tag}</text>`});
+  o+=`<text${edit?` data-sw="${i}" style="cursor:pointer"`:''} x="${(mx+nx).toFixed(1)}" y="${(my+ny+13).toFixed(1)}" text-anchor="${side}" font-family="Arial,sans-serif" font-size="38" font-weight="700" fill="${c}" stroke="#fff" stroke-width="7" paint-order="stroke">${w.l?esc(String(w.l))+"'":'?'}</text>`});
  (s.d||[]).forEach((d0,i)=>{const d={x:skN(d0.x),y:skN(d0.y),e:String(d0.e||'').replace(/[^A-Z]/g,'').slice(0,8),dir:d0.dir},on=sel&&sel.t==='d'&&sel.i===i,c=on?'#1f6fd1':'#111',v=Object.prototype.hasOwnProperty.call(SKDIR,d.dir)?SKDIR[d.dir]:null;
   if(v)o+=`<line x1="${d.x+v[0]*20}" y1="${d.y+v[1]*20}" x2="${d.x+v[0]*62}" y2="${d.y+v[1]*62}" stroke="${c}" stroke-width="4" marker-end="url(#skar)"/>`;
   o+=`<g${edit?` data-sd="${i}" style="cursor:pointer"`:''}><circle cx="${d.x}" cy="${d.y}" r="17" fill="#fff" stroke="${c}" stroke-width="4"/><path d="M${d.x-10} ${d.y-10}L${d.x+10} ${d.y+10}M${d.x+10} ${d.y-10}L${d.x-10} ${d.y+10}" stroke="${c}" stroke-width="4"/>${edit?`<circle cx="${d.x}" cy="${d.y}" r="40" fill="transparent"/>`:''}</g>`;
@@ -657,7 +673,7 @@ function skDraw(full){const sv=$('#sksv');if(sv)sv.innerHTML=skSVG(skGet(cur),tr
  document.querySelectorAll('[data-act="skMode"]').forEach(b=>b.classList.toggle('vis',b.dataset.m===skMode));const sn=$('[data-act="skSnap"]');if(sn)sn.classList.toggle('vis',!!skGet(cur).snap)}
 function skNearFloors(s,x,y){let best=1e9,f=1;(s.w||[]).forEach(w=>{const ax=+w.a[0],ay=+w.a[1],bx=+w.b[0],by=+w.b[1],dx=bx-ax,dy=by-ay,L2=dx*dx+dy*dy||1,t=Math.max(0,Math.min(1,((x-ax)*dx+(y-ay)*dy)/L2)),dd=Math.hypot(ax+t*dx-x,ay+t*dy-y);if(dd<best){best=dd;f=skFloors(w.f)}});return f}
 function skBind(){const sv=$('#sksv');if(!sv||locked())return;
- sv.addEventListener('click',e=>{const s=skGet(cur),hit=e.target.closest('[data-sw],[data-sd]');
+ sv.addEventListener('click',e=>{const s=skGet(cur),hit=e.target.closest(skMode==='ds'?'[data-sd]':'[data-sw],[data-sd]');
   const q=sv.createSVGPoint();q.x=e.clientX;q.y=e.clientY;const c=q.matrixTransform(sv.getScreenCTM().inverse());
   // Drawing lines: a tap near an existing corner uses that corner (closes the outline, also without snap).
   let near=null;if(skMode==='wall'){let best=45;s.w.forEach(w=>[w.a,w.b].forEach(pt=>{const dd=Math.hypot(pt[0]-c.x,pt[1]-c.y);if(dd<best){best=dd;near=pt}}))}
