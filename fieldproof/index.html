@@ -58,7 +58,8 @@ label.f{display:block;font-weight:600;font-size:15px;margin:12px 0 4px;color:var
 .ed{display:grid;gap:12px;padding:12px;max-width:1400px;margin:0 auto}
 @media(min-width:900px){.ed{grid-template-columns:minmax(0,1fr) 330px;align-items:start}.side{position:sticky;top:84px}}
 .tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px}
-.skwrap{border:1.5px solid var(--line);border-radius:6px;overflow:hidden;background:#fff;margin:6px 0}.skpaper{display:block;width:100%;height:auto;touch-action:manipulation}
+.skwrap{border:1.5px solid var(--line);border-radius:6px;overflow:hidden;background:#fff;margin:6px 0;text-align:center}.skpaper{display:block;width:100%;height:auto;touch-action:manipulation;margin:0 auto}#sksv{max-height:62vh;width:auto;max-width:100%}
+.skp{position:sticky;top:0;z-index:5;background:var(--paper);padding:6px 0;min-height:52px;border-bottom:1px solid var(--line)}
 .sktb,.skrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}.skgap{flex:1}.skcode{font-family:'Courier New',monospace;font-size:18px;min-width:56px}
 .tab{flex:none;min-height:40px;padding:0 14px;border:1.5px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);font-weight:600;font-size:15px;display:inline-flex;align-items:center;cursor:pointer}
 .tab.on{border-color:var(--ink);background:var(--ink);color:var(--paper)}
@@ -281,7 +282,7 @@ function arm(b,fn){if(b.dataset.armed==='1'){fn();return}b.dataset.armed='1';con
 // fpSites/{id}           site visit (type 'visit', author + managers only) or job (type 'job', managers create)
 // fpSites/{id}/proofs     one signed verification per building version (locked once signed)
 // fpSites/{id}/photos     compressed site photos (immutable)
-const APP={name:'29Cyber FieldProof',version:'3.1.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber FieldProof',version:'3.1.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={crewDomain:'crew.29cyber.internal'};
 let TENANT=null;
 const normCode=v=>String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
@@ -621,20 +622,20 @@ const skN=v=>{const n=+v;return Number.isFinite(n)?Math.round(Math.max(-SKW,Math
 function skSVG(s,edit){const sel=edit?skSel:null;let o=`<defs><marker id="skar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#111"/></marker>${edit&&s.snap?`<pattern id="skg" width="${SKG}" height="${SKG}" patternUnits="userSpaceOnUse"><path d="M${SKG} 0H0V${SKG}" fill="none" stroke="#dde2e8" stroke-width="1"/></pattern>`:''}</defs><rect width="${SKW}" height="${SKH}" fill="#fff"/>${edit&&s.snap?`<rect width="${SKW}" height="${SKH}" fill="url(#skg)"/>`:''}`;
  (s.w||[]).forEach((w0,i)=>{const w={a:[skN((w0.a||[])[0]),skN((w0.a||[])[1])],b:[skN((w0.b||[])[0]),skN((w0.b||[])[1])],l:skN(w0.l),t:w0.t==='e'?'e':'n',s:(Array.isArray(w0.s)?w0.s:[]).filter(k=>k in SKSV)},on=sel&&sel.t==='w'&&sel.i===i,c=on?'#1f6fd1':'#111';
   o+=`<line x1="${w.a[0]}" y1="${w.a[1]}" x2="${w.b[0]}" y2="${w.b[1]}" stroke="${c}" stroke-width="${on?7:5}" stroke-linecap="round"${w.t==='e'?' stroke-dasharray="20 14"':''}/>`;
-  if(edit)o+=`<line data-sw="${i}" x1="${w.a[0]}" y1="${w.a[1]}" x2="${w.b[0]}" y2="${w.b[1]}" stroke="transparent" stroke-width="36" style="cursor:pointer"/>`;
-  const mx=(w.a[0]+w.b[0])/2,my=(w.a[1]+w.b[1])/2,dx=w.b[0]-w.a[0],dy=w.b[1]-w.a[1],L=Math.hypot(dx,dy)||1,nx=-dy/L*30,ny=dx/L*30;
+  if(edit)o+=`<line data-sw="${i}" x1="${w.a[0]}" y1="${w.a[1]}" x2="${w.b[0]}" y2="${w.b[1]}" stroke="transparent" stroke-width="60" style="cursor:pointer"/>`;
+  const mx=(w.a[0]+w.b[0])/2,my=(w.a[1]+w.b[1])/2,dx=w.b[0]-w.a[0],dy=w.b[1]-w.a[1],L=Math.hypot(dx,dy)||1,nx=-dy/L*34,ny=dx/L*34;
   const tag=w.t==='e'&&(w.s||[]).length?' '+w.s.map(k=>k==='lg'?'LG':'CL').join('+'):'';
   const side=Math.abs(dx)<Math.abs(dy)?(nx>0?'start':'end'):'middle';
-  o+=`<text x="${(mx+nx).toFixed(1)}" y="${(my+ny+9).toFixed(1)}" text-anchor="${side}" font-family="Arial,sans-serif" font-size="28" font-weight="700" fill="${c}" stroke="#fff" stroke-width="7" paint-order="stroke">${w.l?esc(String(w.l))+"'":'?'}${esc(tag)}</text>`});
+  o+=`<text${edit?` data-sw="${i}" style="cursor:pointer"`:''} x="${(mx+nx).toFixed(1)}" y="${(my+ny+13).toFixed(1)}" text-anchor="${side}" font-family="Arial,sans-serif" font-size="38" font-weight="700" fill="${c}" stroke="#fff" stroke-width="7" paint-order="stroke">${w.l?esc(String(w.l))+"'":'?'}${esc(tag)}</text>`});
  (s.d||[]).forEach((d0,i)=>{const d={x:skN(d0.x),y:skN(d0.y),e:String(d0.e||'').replace(/[^A-Z]/g,'').slice(0,8),dir:d0.dir},on=sel&&sel.t==='d'&&sel.i===i,c=on?'#1f6fd1':'#111',v=Object.prototype.hasOwnProperty.call(SKDIR,d.dir)?SKDIR[d.dir]:null;
   if(v)o+=`<line x1="${d.x+v[0]*20}" y1="${d.y+v[1]*20}" x2="${d.x+v[0]*62}" y2="${d.y+v[1]*62}" stroke="${c}" stroke-width="4" marker-end="url(#skar)"/>`;
-  o+=`<g${edit?` data-sd="${i}" style="cursor:pointer"`:''}><circle cx="${d.x}" cy="${d.y}" r="17" fill="#fff" stroke="${c}" stroke-width="4"/><path d="M${d.x-10} ${d.y-10}L${d.x+10} ${d.y+10}M${d.x+10} ${d.y-10}L${d.x-10} ${d.y+10}" stroke="${c}" stroke-width="4"/>${edit?`<circle cx="${d.x}" cy="${d.y}" r="30" fill="transparent"/>`:''}</g>`;
-  if(d.e){const r=d.x<SKW-150;o+=`<text x="${d.x+(r?26:-26)}" y="${d.y-24}" text-anchor="${r?'start':'end'}" font-family="Courier New,monospace" font-size="28" font-weight="700" fill="${c}" stroke="#fff" stroke-width="7" paint-order="stroke">${esc(d.e)}</text>`}});
+  o+=`<g${edit?` data-sd="${i}" style="cursor:pointer"`:''}><circle cx="${d.x}" cy="${d.y}" r="17" fill="#fff" stroke="${c}" stroke-width="4"/><path d="M${d.x-10} ${d.y-10}L${d.x+10} ${d.y+10}M${d.x+10} ${d.y-10}L${d.x-10} ${d.y+10}" stroke="${c}" stroke-width="4"/>${edit?`<circle cx="${d.x}" cy="${d.y}" r="40" fill="transparent"/>`:''}</g>`;
+  if(d.e){const r=d.x<SKW-150;o+=`<text x="${d.x+(r?26:-26)}" y="${d.y-24}" text-anchor="${r?'start':'end'}" font-family="Courier New,monospace" font-size="38" font-weight="700" fill="${c}" stroke="#fff" stroke-width="7" paint-order="stroke">${esc(d.e)}</text>`}});
  if(edit&&skStart)o+=`<circle cx="${skN(skStart[0])}" cy="${skN(skStart[1])}" r="11" fill="#1f6fd1"/>`;
  return o}
 const skPaper=(s,edit)=>`<svg ${edit?'id="sksv" ':''}class="skpaper" viewBox="0 0 ${SKW} ${SKH}" role="img" aria-label="Sketch of the building">${skSVG(s,edit)}</svg>`;
 function skPanel(){const el=$('#skp');if(!el)return;const s=skGet(cur);
- if(!skSel){el.innerHTML=`<p class="hint">${skMode==='wall'?(skStart?'Tap the next corner. <button class="btn sm" data-act="skDone">Finish this line</button>':'Tap a corner to start, then tap each next corner. Tap a line to edit it.'):skMode==='ds'?'Tap where each downspout goes.':'Tap a line or a downspout to edit it.'}</p>`;return}
+ if(!skSel){el.innerHTML=`<p class="hint">${skMode==='wall'?(skStart?'Tap the next corner. <button class="btn sm" data-act="skDone">Finish this line</button>':'Tap a corner to start, then tap each next corner. Tap a line or its ? to type the length.'):skMode==='ds'?'Tap where each downspout goes, then pick its elbows here. Tap an existing (x) to edit it.':'Tap a line (or its ?) to type the length. Tap a (x) to set its elbows.'}</p>`;return}
  if(skSel.t==='w'){const w=s.w[skSel.i];if(!w){skSel=null;return skPanel()}
   el.innerHTML=`<div class="skrow"><label class="f" for="sklen" style="margin:0">Line ${skSel.i+1} length</label><input id="sklen" type="number" inputmode="decimal" min="0" max="999" step="0.5" value="${w.l||''}" style="width:96px"><span>ft</span><button class="btn sm danger" data-act="skDel">Delete</button></div>
   <div class="skrow"><button class="btn sm ${w.t!=='e'?'vis':''}" data-act="skType" data-t="n">━ New gutter</button><button class="btn sm ${w.t==='e'?'vis':''}" data-act="skType" data-t="e">╍ Existing (stays)</button></div>
@@ -648,7 +649,7 @@ function skBind(){const sv=$('#sksv');if(!sv||locked())return;
  sv.addEventListener('click',e=>{const s=skGet(cur),hit=e.target.closest('[data-sw],[data-sd]');
   const q=sv.createSVGPoint();q.x=e.clientX;q.y=e.clientY;const c=q.matrixTransform(sv.getScreenCTM().inverse());
   // Drawing lines: a tap near an existing corner uses that corner (closes the outline, also without snap).
-  let near=null;if(skMode==='wall'){let best=34;s.w.forEach(w=>[w.a,w.b].forEach(pt=>{const dd=Math.hypot(pt[0]-c.x,pt[1]-c.y);if(dd<best){best=dd;near=pt}}))}
+  let near=null;if(skMode==='wall'){let best=45;s.w.forEach(w=>[w.a,w.b].forEach(pt=>{const dd=Math.hypot(pt[0]-c.x,pt[1]-c.y);if(dd<best){best=dd;near=pt}}))}
   if(hit&&!near){skSel=hit.dataset.sw!=null?{t:'w',i:+hit.dataset.sw}:{t:'d',i:+hit.dataset.sd};skStart=null;skDraw();return}
   let x=Math.max(0,Math.min(SKW,c.x)),y=Math.max(0,Math.min(SKH,c.y));if(near){x=near[0];y=near[1]}else if(s.snap){x=Math.round(x/SKG)*SKG;y=Math.round(y/SKG)*SKG}else{x=Math.round(x);y=Math.round(y)}
   if(skMode==='ds'){if(s.d.length>=80)return;s.d.push({x,y,e:'',dir:''});skSel={t:'d',i:s.d.length-1};skDraw();save();return}
@@ -662,9 +663,9 @@ async function skEditor(){const j=cur,lk=locked(),s=lk?(j.sketch||{w:[],d:[],not
  ${tabsHTML(j,lk)}
  ${j.status==='signed'?`<p class="banner">${t('locked')}</p>`:lk?`<p class="banner gray">Draft by ${esc(j.authorName)}. Only the author can edit it.</p>`:`<p class="savest" id="savest">Changes save automatically.</p>`}
  ${lk?'':`<div class="sktb"><button class="btn sm" data-act="skMode" data-m="wall">Line</button><button class="btn sm" data-act="skMode" data-m="ds">(x) Downspout</button><button class="btn sm" data-act="skMode" data-m="sel">Select</button><span class="skgap"></span><button class="btn sm" data-act="skSnap">Snap to grid</button><button class="btn sm" data-act="skUndo">Undo</button></div>`}
+ ${lk?'':'<div id="skp" class="skp"></div>'}
  <div class="skwrap">${skPaper(s,!lk)}</div>
  <p class="hint">${SKLEG}</p>
- ${lk?'':'<div id="skp"></div>'}
  <label class="f" for="sknotes">Sketch notes</label>${lk?`<p style="white-space:pre-wrap;margin:0">${esc(s.notes)||t('none')}</p>`:`<textarea id="sknotes" rows="3" maxlength="2000" placeholder="Anything the crew should know about this house">${esc(s.notes)}</textarea>`}
  </div><aside class="side"><div class="bomc" style="margin-top:0"><h3>Sketch totals</h3><div id="sktot">${skTable(s)}</div></div>
  <button class="btn vis big" data-act="review">${j.status==='signed'?t('viewDoc'):lk?'View':t('review')}</button></aside></div>${foot()}`;
