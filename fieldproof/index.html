@@ -282,7 +282,7 @@ function arm(b,fn){if(b.dataset.armed==='1'){fn();return}b.dataset.armed='1';con
 // fpSites/{id}           site visit (type 'visit', author + managers only) or job (type 'job', managers create)
 // fpSites/{id}/proofs     one signed verification per building version (locked once signed)
 // fpSites/{id}/photos     compressed site photos (immutable)
-const APP={name:'29Cyber FieldProof',version:'3.1.3',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber FieldProof',version:'3.2.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={crewDomain:'crew.29cyber.internal'};
 let TENANT=null;
 const normCode=v=>String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
@@ -627,14 +627,23 @@ function skTable(s){const r=skRows(s);return r.length?`<table class="bom">${r.ma
 const SKLEG='Solid line: new gutter · Dashed line: existing gutter that stays · Double line: 2 stories · Green dots: Leaf Guard · Thin red line: cleaning · (x) downspout, letters = elbows, arrow = where the water goes';
 // One drawing for the editor, the review page, the crew and the PDF. edit=true adds the grid and tap targets.
 const skN=v=>{const n=+v;return Number.isFinite(n)?Math.round(Math.max(-SKW,Math.min(2*SKW,n))*10)/10:0};
-function skSVG(s,edit){const sel=edit?skSel:null;let o=`<defs><marker id="skar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#111"/></marker>${edit&&s.snap?`<pattern id="skg" width="${SKG}" height="${SKG}" patternUnits="userSpaceOnUse"><path d="M${SKG} 0H0V${SKG}" fill="none" stroke="#dde2e8" stroke-width="1"/></pattern>`:''}</defs><rect width="${SKW}" height="${SKH}" fill="#fff"/>${edit&&s.snap?`<rect width="${SKW}" height="${SKH}" fill="url(#skg)"/>`:''}`;
+const skTs=(s,k)=>{const v=+((s&&s.ts&&s.ts[k])||1);return Number.isFinite(v)?Math.max(0.5,Math.min(2,v)):1};
+function skSVG(s,edit){const sel=edit?skSel:null,TL=skTs(s,'l'),TE=skTs(s,'e');let o=`<defs><marker id="skar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#111"/></marker>${edit&&s.snap?`<pattern id="skg" width="${SKG}" height="${SKG}" patternUnits="userSpaceOnUse"><path d="M${SKG} 0H0V${SKG}" fill="none" stroke="#dde2e8" stroke-width="1"/></pattern>`:''}</defs><rect width="${SKW}" height="${SKH}" fill="#fff"/>${edit&&s.snap?`<rect width="${SKW}" height="${SKH}" fill="url(#skg)"/>`:''}`;
  // Normalized walls. "Inside" = the side facing the middle of the drawing, so Leaf Guard and
  // cleaning always sit inside the house line and the length always outside, whatever the
  // direction the line was drawn. Parallel lines (2 stories, Leaf Guard, cleaning) are
  // mitered at shared corners so they meet.
  const W=(s.w||[]).map(w0=>({a:[skN((w0.a||[])[0]),skN((w0.a||[])[1])],b:[skN((w0.b||[])[0]),skN((w0.b||[])[1])],l:skN(w0.l),t:w0.t==='e'?'e':'n',f:skFloors(w0.f),s:(Array.isArray(w0.s)?w0.s:[]).filter(k=>k in SKSV)}));
- let cx=0,cy=0;W.forEach(w=>{cx+=w.a[0]+w.b[0];cy+=w.a[1]+w.b[1]});if(W.length){cx/=2*W.length;cy/=2*W.length}
- W.forEach(w=>{const dx=w.b[0]-w.a[0],dy=w.b[1]-w.a[1],L=Math.hypot(dx,dy)||1;let ux=-dy/L,uy=dx/L;const mx=(w.a[0]+w.b[0])/2,my=(w.a[1]+w.b[1])/2;if((cx-mx)*ux+(cy-my)*uy<0){ux=-ux;uy=-uy}w.u=[ux,uy];w.L=L});
+ // v3.2: "inside" is worked out per shape (lines joined by their corners). A closed shape
+ // tests which side is really inside it; an open run of lines uses its own middle.
+ const pk=p=>Math.round(p[0])+','+Math.round(p[1]),par=W.map((_,i)=>i),fd=i=>par[i]===i?i:(par[i]=fd(par[i]));
+ {const at={};W.forEach((w,i)=>[w.a,w.b].forEach(p=>{const k=pk(p);if(k in at)par[fd(i)]=fd(at[k]);else at[k]=i}))}
+ const comp={};W.forEach((w,i)=>{(comp[fd(i)]=comp[fd(i)]||[]).push(i)});
+ Object.values(comp).forEach(ids=>{const deg={};ids.forEach(i=>[W[i].a,W[i].b].forEach(p=>{const k=pk(p);deg[k]=(deg[k]||0)+1}));
+  const closed=ids.length>2&&Object.values(deg).every(n=>n===2);let cx=0,cy=0;ids.forEach(i=>{cx+=W[i].a[0]+W[i].b[0];cy+=W[i].a[1]+W[i].b[1]});cx/=2*ids.length;cy/=2*ids.length;
+  const inside=(x,y)=>{let c=false;ids.forEach(i=>{const a=W[i].a,b=W[i].b;if((a[1]>y)!==(b[1]>y)&&x<(b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0])c=!c});return c};
+  ids.forEach(i=>{const w=W[i],dx=w.b[0]-w.a[0],dy=w.b[1]-w.a[1],L=Math.hypot(dx,dy)||1;let ux=-dy/L,uy=dx/L;const mx=(w.a[0]+w.b[0])/2,my=(w.a[1]+w.b[1])/2;
+   const flip=closed?!inside(mx+ux*3,my+uy*3):((cx-mx)*ux+(cy-my)*uy<0);if(flip){ux=-ux;uy=-uy}w.u=[ux,uy];w.L=L})});
  const same=(p,q)=>Math.abs(p[0]-q[0])<0.5&&Math.abs(p[1]-q[1])<0.5;
  const cross=(p1,d1,p2,d2)=>{const den=d1[0]*d2[1]-d1[1]*d2[0];if(Math.abs(den)<1e-6)return null;const t=((p2[0]-p1[0])*d2[1]-(p2[1]-p1[1])*d2[0])/den;return[p1[0]+d1[0]*t,p1[1]+d1[1]*t]};
  // End point of wall i's parallel line at distance k (inside > 0), mitered with a wall sharing that corner.
@@ -650,15 +659,25 @@ function skSVG(s,edit){const sel=edit?skSel:null;let o=`<defs><marker id="skar" 
   o+=two?seg(i,-5,`stroke="${c}" stroke-width="${on?4.5:3.5}" stroke-linecap="square"${dash}`)+seg(i,5,`stroke="${c}" stroke-width="${on?4.5:3.5}" stroke-linecap="square"${dash}`)
         :seg(i,0,`stroke="${c}" stroke-width="${on?7:5}" stroke-linecap="round"${dash}`);
   if(edit)o+=`<line data-sw="${i}" x1="${w.a[0]}" y1="${w.a[1]}" x2="${w.b[0]}" y2="${w.b[1]}" stroke="transparent" stroke-width="60" style="cursor:pointer"/>`;
-  const mx=(w.a[0]+w.b[0])/2,my=(w.a[1]+w.b[1])/2,dx=w.b[0]-w.a[0],dy=w.b[1]-w.a[1],nx=-w.u[0]*34,ny=-w.u[1]*34;
+  const mx=(w.a[0]+w.b[0])/2,my=(w.a[1]+w.b[1])/2,dx=w.b[0]-w.a[0],dy=w.b[1]-w.a[1],off=(w.f===2?24:18)+16*TL,nx=-w.u[0]*off,ny=-w.u[1]*off;
   const side=Math.abs(dx)<Math.abs(dy)?(nx>0?'start':'end'):'middle';
-  o+=`<text${edit?` data-sw="${i}" style="cursor:pointer"`:''} x="${(mx+nx).toFixed(1)}" y="${(my+ny+13).toFixed(1)}" text-anchor="${side}" font-family="Arial,sans-serif" font-size="38" font-weight="700" fill="${c}" stroke="#fff" stroke-width="7" paint-order="stroke">${w.l?esc(String(w.l))+"'":'?'}</text>`});
- (s.d||[]).forEach((d0,i)=>{const d={x:skN(d0.x),y:skN(d0.y),e:String(d0.e||'').replace(/[^A-Z]/g,'').slice(0,8),dir:d0.dir},on=sel&&sel.t==='d'&&sel.i===i,c=on?'#1f6fd1':'#111',v=Object.prototype.hasOwnProperty.call(SKDIR,d.dir)?SKDIR[d.dir]:null;
+  o+=`<text${edit?` data-sw="${i}" style="cursor:pointer"`:''} x="${(mx+nx).toFixed(1)}" y="${(my+ny+13*TL).toFixed(1)}" text-anchor="${side}" font-family="Arial,sans-serif" font-size="${(38*TL).toFixed(1)}" font-weight="700" fill="${c}" stroke="#fff" stroke-width="7" paint-order="stroke">${w.l?esc(String(w.l))+"'":'?'}</text>`});
+ (s.d||[]).forEach((d0,i)=>{const d={x:skN(d0.x),y:skN(d0.y),e:String(d0.e||'').replace(/[^A-Z]/g,'').slice(0,8),dir:d0.dir,lp:d0.lp},on=sel&&sel.t==='d'&&sel.i===i,c=on?'#1f6fd1':'#111',v=Object.prototype.hasOwnProperty.call(SKDIR,d.dir)?SKDIR[d.dir]:null;
   if(v)o+=`<line x1="${d.x+v[0]*20}" y1="${d.y+v[1]*20}" x2="${d.x+v[0]*62}" y2="${d.y+v[1]*62}" stroke="${c}" stroke-width="4" marker-end="url(#skar)"/>`;
   o+=`<g${edit?` data-sd="${i}" style="cursor:pointer"`:''}><circle cx="${d.x}" cy="${d.y}" r="17" fill="#fff" stroke="${c}" stroke-width="4"/><path d="M${d.x-10} ${d.y-10}L${d.x+10} ${d.y+10}M${d.x+10} ${d.y-10}L${d.x-10} ${d.y+10}" stroke="${c}" stroke-width="4"/>${edit?`<circle cx="${d.x}" cy="${d.y}" r="40" fill="transparent"/>`:''}</g>`;
-  if(d.e){const r=d.x<SKW-150;o+=`<text x="${d.x+(r?26:-26)}" y="${d.y-24}" text-anchor="${r?'start':'end'}" font-family="Courier New,monospace" font-size="38" font-weight="700" fill="${c}" stroke="#fff" stroke-width="7" paint-order="stroke">${esc(d.e)}</text>`}});
+  if(d.e){const fs=38*TE,dir=Object.prototype.hasOwnProperty.call(SKDIR,d.lp)?SKDIR[d.lp]:skLabelDir(W,d,v,TL),R=Math.abs(dir[1])>0.5?24+fs*0.55:28,
+   lx=d.x+dir[0]*R,ly=d.y+dir[1]*R+fs*0.35,anc=dir[0]>0.3?'start':dir[0]<-0.3?'end':'middle';
+   o+=`<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="${anc}" font-family="Courier New,monospace" font-size="${fs.toFixed(1)}" font-weight="700" fill="${c}" stroke="#fff" stroke-width="7" paint-order="stroke">${esc(d.e)}</text>`}});
  if(edit&&skStart)o+=`<circle cx="${skN(skStart[0])}" cy="${skN(skStart[1])}" r="11" fill="#1f6fd1"/>`;
  return o}
+// Elbow letters go to the side away from the nearest wall and away from the water arrow.
+function skLabelDir(W,d,arrow,TL){TL=TL||1;const LB=W.map(w=>{const off=(w.f===2?24:18)+16*TL;return[(w.a[0]+w.b[0])/2-w.u[0]*off,(w.a[1]+w.b[1])/2-w.u[1]*off]});let best=1e9,q=null;W.forEach(w=>{const dx=w.b[0]-w.a[0],dy=w.b[1]-w.a[1],L2=dx*dx+dy*dy||1,t=Math.max(0,Math.min(1,((d.x-w.a[0])*dx+(d.y-w.a[1])*dy)/L2)),px=w.a[0]+t*dx,py=w.a[1]+t*dy,dd=Math.hypot(px-d.x,py-d.y);if(dd<best){best=dd;q={px,py,w}}});
+ const C=[[0,-1],[1,0],[0,1],[-1,0],[0.7,-0.7],[-0.7,-0.7],[0.7,0.7],[-0.7,0.7]];let away=[0,-1];
+ if(q){let ax=d.x-q.px,ay=d.y-q.py;const L=Math.hypot(ax,ay);if(L>4){away=[ax/L,ay/L]}else{away=[-q.w.u[0],-q.w.u[1]]}}
+ let pick=C[0],sc=-1e9;C.forEach(c=>{let v=c[0]*away[0]+c[1]*away[1];if(arrow)v-=1.2*Math.max(0,c[0]*arrow[0]+c[1]*arrow[1]);
+  W.forEach(w=>{const dx=w.b[0]-w.a[0],dy=w.b[1]-w.a[1],L2=dx*dx+dy*dy||1,x=d.x+c[0]*60,y=d.y+c[1]*60,t=Math.max(0,Math.min(1,((x-w.a[0])*dx+(y-w.a[1])*dy)/L2));if(Math.hypot(w.a[0]+t*dx-x,w.a[1]+t*dy-y)<30)v-=2});
+  LB.forEach(p=>{if(Math.hypot(p[0]-(d.x+c[0]*70),p[1]-(d.y+c[1]*55))<70)v-=1.5});
+  if(v>sc){sc=v;pick=c}});return pick}
 const skPaper=(s,edit)=>`<svg ${edit?'id="sksv" ':''}class="skpaper" viewBox="0 0 ${SKW} ${SKH}" role="img" aria-label="Sketch of the building">${skSVG(s,edit)}</svg>`;
 function skPanel(){const el=$('#skp');if(!el)return;const s=skGet(cur);
  if(!skSel){el.innerHTML=`<p class="hint">${skMode==='wall'?(skStart?'Tap the next corner. <button class="btn sm" data-act="skDone">Finish this line</button>':'Tap a corner to start, then tap each next corner. Tap a line or its ? to type the length.'):skMode==='ds'?'Tap where each downspout goes, then pick its elbows here. Tap an existing (x) to edit it.':'Tap a line (or its ?) to type the length. Tap a (x) to set its elbows.'}</p>`;return}
@@ -668,7 +687,8 @@ function skPanel(){const el=$('#skp');if(!el)return;const s=skGet(cur);
   <div class="skrow"><span class="hint">Also on this line:</span>${Object.entries(SKSV).map(([k,n])=>`<button class="btn sm ${(w.s||[]).includes(k)?'vis':''}" data-act="skSvc" data-k="${k}">${n}</button>`).join('')}</div>`;return}
  const d=s.d[skSel.i];if(!d){skSel=null;return skPanel()}
  el.innerHTML=`<div class="skrow"><span>Elbows</span><b class="skcode">${esc(d.e)||'—'}</b>${SKEL.map(k=>`<button class="btn sm" data-act="skEl" data-e="${k}">+${k}</button>`).join('')}<button class="btn sm" data-act="skEl" data-e="" aria-label="Remove the last elbow">⌫</button><span class="skgap"></span><button class="btn sm ${skFloors(d.f)===1?'vis':''}" data-act="skDsFl" data-f="1">1 story</button><button class="btn sm ${skFloors(d.f)===2?'vis':''}" data-act="skDsFl" data-f="2">2 stories</button></div>
- <div class="skrow"><span>Water goes</span>${Object.keys(SKDIR).map(k=>`<button class="btn sm ${d.dir===k?'vis':''}" data-act="skDir" data-d="${k}" aria-label="Water goes ${k}">${SKARW[k]}</button>`).join('')}<button class="btn sm danger" data-act="skDel">Delete</button></div>`}
+ <div class="skrow"><span>Water goes</span>${Object.keys(SKDIR).map(k=>`<button class="btn sm ${d.dir===k?'vis':''}" data-act="skDir" data-d="${k}" aria-label="Water goes ${k}">${SKARW[k]}</button>`).join('')}<button class="btn sm danger" data-act="skDel">Delete</button></div>
+ <div class="skrow"><span>Letters</span><button class="btn sm ${!d.lp?'vis':''}" data-act="skLp" data-d="">Auto</button>${Object.keys(SKDIR).map(k=>`<button class="btn sm ${d.lp===k?'vis':''}" data-act="skLp" data-d="${k}" aria-label="Letters ${k}">${SKARW[k]}</button>`).join('')}</div>`}
 function skDraw(full){const sv=$('#sksv');if(sv)sv.innerHTML=skSVG(skGet(cur),true);if(full!==false)skPanel();const t=$('#sktot');if(t)t.innerHTML=skTable(skGet(cur));
  document.querySelectorAll('[data-act="skMode"]').forEach(b=>b.classList.toggle('vis',b.dataset.m===skMode));const sn=$('[data-act="skSnap"]');if(sn)sn.classList.toggle('vis',!!skGet(cur).snap)}
 function skNearFloors(s,x,y){let best=1e9,f=1;(s.w||[]).forEach(w=>{const ax=+w.a[0],ay=+w.a[1],bx=+w.b[0],by=+w.b[1],dx=bx-ax,dy=by-ay,L2=dx*dx+dy*dy||1,t=Math.max(0,Math.min(1,((x-ax)*dx+(y-ay)*dy)/L2)),dd=Math.hypot(ax+t*dx-x,ay+t*dy-y);if(dd<best){best=dd;f=skFloors(w.f)}});return f}
@@ -689,7 +709,8 @@ async function skEditor(){const j=cur,lk=locked(),s=lk?(j.sketch||{w:[],d:[],not
  <div class="ed"><div>
  ${tabsHTML(j,lk)}
  ${j.status==='signed'?`<p class="banner">${t('locked')}</p>`:lk?`<p class="banner gray">Draft by ${esc(j.authorName)}. Only the author can edit it.</p>`:`<p class="savest" id="savest">Changes save automatically.</p>`}
- ${lk?'':`<div class="sktb"><button class="btn sm" data-act="skMode" data-m="wall">Line</button><button class="btn sm" data-act="skMode" data-m="ds">(x) Downspout</button><button class="btn sm" data-act="skMode" data-m="sel">Select</button><span class="skgap"></span><button class="btn sm" data-act="skSnap">Snap to grid</button><button class="btn sm" data-act="skUndo">Undo</button></div>`}
+ ${lk?'':`<div class="sktb"><button class="btn sm" data-act="skMode" data-m="wall">Line</button><button class="btn sm" data-act="skMode" data-m="ds">(x) Downspout</button><button class="btn sm" data-act="skMode" data-m="sel">Select</button><span class="skgap"></span><button class="btn sm" data-act="skSnap">Snap to grid</button><button class="btn sm" data-act="skUndo">Undo</button></div>
+ <div class="sktb"><span class="hint">Text size</span><span>Lengths</span><button class="btn sm" data-act="skTs" data-k="l" data-d="-1" aria-label="Smaller lengths">A−</button><button class="btn sm" data-act="skTs" data-k="l" data-d="1" aria-label="Bigger lengths">A+</button><span style="margin-left:10px">Elbows</span><button class="btn sm" data-act="skTs" data-k="e" data-d="-1" aria-label="Smaller elbow letters">A−</button><button class="btn sm" data-act="skTs" data-k="e" data-d="1" aria-label="Bigger elbow letters">A+</button></div>`}
  ${lk?'':'<div id="skp" class="skp"></div>'}
  <div class="skwrap">${skPaper(s,!lk)}</div>
  <p class="hint">${SKLEG}</p>
@@ -1008,6 +1029,8 @@ app.addEventListener('click',async e=>{const b=e.target.closest('[data-act]');if
  else if(a==='skDel'&&!locked()&&skSel){const s=skGet(cur);(skSel.t==='w'?s.w:s.d).splice(skSel.i,1);skSel=null;skStart=null;skDraw();save()}
  else if(a==='skType'&&!locked()&&skSel&&skSel.t==='w'){const w=skGet(cur).w[skSel.i];w.t=b.dataset.t;skType=w.t;skDraw();save()}
  else if(a==='skFl'&&!locked()&&skSel&&skSel.t==='w'){const w=skGet(cur).w[skSel.i];w.f=skFloors(b.dataset.f);skFl=w.f;skDraw();save()}
+ else if(a==='skLp'&&!locked()&&skSel&&skSel.t==='d'){const d=skGet(cur).d[skSel.i];if(b.dataset.d)d.lp=b.dataset.d;else delete d.lp;skDraw();save()}
+ else if(a==='skTs'&&!locked()){const s=skGet(cur),k=b.dataset.k;s.ts=Object.assign({l:1,e:1},s.ts||{});s.ts[k]=Math.round(Math.max(0.5,Math.min(2,(+s.ts[k]||1)+0.1*(+b.dataset.d)))*10)/10;skDraw();save()}
  else if(a==='skDsFl'&&!locked()&&skSel&&skSel.t==='d'){const d=skGet(cur).d[skSel.i];d.f=skFloors(b.dataset.f);skDraw();save()}
  else if(a==='skSvc'&&!locked()&&skSel&&skSel.t==='w'){const w=skGet(cur).w[skSel.i],k=b.dataset.k;w.s=(w.s||[]).includes(k)?w.s.filter(x=>x!==k):[...(w.s||[]),k];skDraw();save()}
  else if(a==='skEl'&&!locked()&&skSel&&skSel.t==='d'){const d=skGet(cur).d[skSel.i],e2=b.dataset.e;d.e=e2?(d.e+e2).slice(0,8):d.e.slice(0,-1);skDraw();save()}
