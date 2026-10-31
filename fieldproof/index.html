@@ -58,6 +58,8 @@ label.f{display:block;font-weight:600;font-size:15px;margin:12px 0 4px;color:var
 .ed{display:grid;gap:12px;padding:12px;max-width:1400px;margin:0 auto}
 @media(min-width:900px){.ed{grid-template-columns:minmax(0,1fr) 330px;align-items:start}.side{position:sticky;top:84px}}
 .tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px}
+.skwrap{border:1.5px solid var(--line);border-radius:6px;overflow:hidden;background:#fff;margin:6px 0}.skpaper{display:block;width:100%;height:auto;touch-action:manipulation}
+.sktb,.skrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}.skgap{flex:1}.skcode{font-family:'Courier New',monospace;font-size:18px;min-width:56px}
 .tab{flex:none;min-height:40px;padding:0 14px;border:1.5px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);font-weight:600;font-size:15px;display:inline-flex;align-items:center;cursor:pointer}
 .tab.on{border-color:var(--ink);background:var(--ink);color:var(--paper)}
 .vrow{display:flex;gap:8px;align-items:center;margin:4px 0 8px;flex-wrap:wrap}
@@ -279,7 +281,7 @@ function arm(b,fn){if(b.dataset.armed==='1'){fn();return}b.dataset.armed='1';con
 // fpSites/{id}           site visit (type 'visit', author + managers only) or job (type 'job', managers create)
 // fpSites/{id}/proofs     one signed verification per building version (locked once signed)
 // fpSites/{id}/photos     compressed site photos (immutable)
-const APP={name:'29Cyber FieldProof',version:'3.0.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber FieldProof',version:'3.1.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={crewDomain:'crew.29cyber.internal'};
 let TENANT=null;
 const normCode=v=>String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
@@ -585,7 +587,7 @@ async function saveProof(){
 async function createProof(o){
   const id=newId();
   const p={siteId:site.fid,bldg:o.bldg,model:o.model||'',notes:o.notes||'',gps:o.gps||null,views:o.views||[],curColor:o.curColor||'',version:o.version,prevId:o.prevId||'',prevSite:o.prevSite||'',
-    status:'draft',authorUid:session.uid,authorName:session.name,createdAt:now(),updatedAt:now(),sig:null,signedAt:null,hash:''};
+    status:'draft',authorUid:session.uid,authorName:session.name,createdAt:now(),updatedAt:now(),sig:null,signedAt:null,hash:'',...(o.sketch?{sketch:o.sketch}:{})};
   await fbSet(`fpSites/${site.fid}/proofs/${id}`,p);
   cur={...p,id,_site:site.fid,createdAt:new Date()};proofs.push(cur);vi=0;selId=null;zoom=1;editor();
 }
@@ -593,15 +595,90 @@ async function createProof(o){
 async function newVersion(fromId){
   const f=proofs.find(p=>p.id===fromId);if(!f)return;
   const views=JSON.parse(JSON.stringify(f.views||[]));views.forEach(v=>{v.id=uid();v.items.forEach(it=>{it.id=uid()})});
-  try{await createProof({bldg:f.bldg,model:f.model,notes:f.notes,gps:null,views,curColor:f.curColor,version:(f.version||1)+1,prevId:f.id,prevSite:f._site});}
+  try{await createProof({bldg:f.bldg,model:f.model,notes:f.notes,gps:null,views,curColor:f.curColor,sketch:skOn(f)?JSON.parse(JSON.stringify(f.sketch)):null,version:(f.version||1)+1,prevId:f.id,prevSite:f._site});}
   catch(e){console.log(e);alertMsg('Could not create the new version.');}
 }
 let saveT=null;
 function save(){if(!cur||cur.status!=='draft'||cur.authorUid!==session.uid)return;clearTimeout(saveT);const j=cur;saveT=setTimeout(()=>persist(j),1200)}
-async function persist(j){try{await fbUpdate(`fpSites/${j.siteId}/proofs/${j.id}`,{views:j.views,curColor:j.curColor||'',updatedAt:now()});setSaved('Saved');}catch(e){console.log('save',e);setSaved('Not saved: check your connection',1)}}
+async function persist(j){try{await fbUpdate(`fpSites/${j.siteId}/proofs/${j.id}`,{views:j.views,curColor:j.curColor||'',...(j.sketch?{sketch:j.sketch}:{}),updatedAt:now()});setSaved('Saved');}catch(e){console.log('save',e);setSaved('Not saved: check your connection',1)}}
 function setSaved(m,bad){const e=$('#savest');if(e){e.textContent=m;e.className='savest'+(bad?' bad':'')}}
 async function flushSave(){if(saveT){clearTimeout(saveT);saveT=null;await persist(cur)}}
 function knownColors(){const set=new Set((ls('colors')||'').split('|').filter(Boolean));proofs.concat(cur?[cur]:[]).forEach(j=>(j.views||[]).forEach(v=>v.items.forEach(it=>{if(it.color&&it.color.trim())set.add(it.color.trim())})));return [...set].slice(0,40)}
+
+// ─── Sketch (v3.1): the house outline drawn by the salesperson, next to the photo plan.
+// Solid line = new gutter. Dashed line = existing gutter that stays (cleaning / Leaf Guard).
+// (x) = downspout, with its elbow letters and where the water goes. Signed with the plan. ───
+const SKW=1000,SKH=700,SKG=25,SKEL=['A','B','C','D'],SKSV={lg:'Leaf Guard',cl:'Cleaning'},SKDIR={u:[0,-1],r:[1,0],d:[0,1],l:[-1,0]},SKARW={u:'↑',r:'→',d:'↓',l:'←'};
+let skMode='wall',skType='n',skSel=null,skStart=null;
+const skOn=j=>!!(j&&j.sketch&&(((j.sketch.w||[]).length)||((j.sketch.d||[]).length)||String(j.sketch.notes||'').trim()));
+function skGet(j){if(!j.sketch||typeof j.sketch!=='object')j.sketch={w:[],d:[],notes:'',snap:true};const s=j.sketch;s.w=s.w||[];s.d=s.d||[];s.notes=s.notes||'';if(s.snap===undefined)s.snap=true;return s}
+function skTotals(s){const r={n:0,e:0,lg:0,cl:0,ds:(s.d||[]).length,el:{}};(s.w||[]).forEach(w=>{const l=+w.l||0;if(w.t==='e'){r.e+=l;(w.s||[]).forEach(k=>{if(k in SKSV)r[k]+=l})}else r.n+=l});(s.d||[]).forEach(d=>String(d.e||'').split('').forEach(c=>{r.el[c]=(r.el[c]||0)+1}));return r}
+function skRows(s){const r=skTotals(s),o=[],f=x=>Math.round(x*10)/10+' ft';if(r.n)o.push(['New gutter (solid line)',f(r.n)]);if(r.e)o.push(['Existing gutter, stays (dashed line)',f(r.e)]);if(r.lg)o.push(['Leaf Guard',f(r.lg)]);if(r.cl)o.push(['Cleaning',f(r.cl)]);if(r.ds)o.push(['Downspouts',String(r.ds)]);SKEL.forEach(k=>{if(r.el[k])o.push(['Elbow '+k,String(r.el[k])])});return o}
+function skTable(s){const r=skRows(s);return r.length?`<table class="bom">${r.map(x=>`<tr><td>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join('')}</table>`:`<p class="hint">Nothing drawn yet.</p>`}
+const SKLEG='Solid line: new gutter · Dashed line: existing gutter that stays · (x) downspout, letters = elbows, arrow = where the water goes';
+// One drawing for the editor, the review page, the crew and the PDF. edit=true adds the grid and tap targets.
+const skN=v=>{const n=+v;return Number.isFinite(n)?Math.round(Math.max(-SKW,Math.min(2*SKW,n))*10)/10:0};
+function skSVG(s,edit){const sel=edit?skSel:null;let o=`<defs><marker id="skar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#111"/></marker>${edit&&s.snap?`<pattern id="skg" width="${SKG}" height="${SKG}" patternUnits="userSpaceOnUse"><path d="M${SKG} 0H0V${SKG}" fill="none" stroke="#dde2e8" stroke-width="1"/></pattern>`:''}</defs><rect width="${SKW}" height="${SKH}" fill="#fff"/>${edit&&s.snap?`<rect width="${SKW}" height="${SKH}" fill="url(#skg)"/>`:''}`;
+ (s.w||[]).forEach((w0,i)=>{const w={a:[skN((w0.a||[])[0]),skN((w0.a||[])[1])],b:[skN((w0.b||[])[0]),skN((w0.b||[])[1])],l:skN(w0.l),t:w0.t==='e'?'e':'n',s:(Array.isArray(w0.s)?w0.s:[]).filter(k=>k in SKSV)},on=sel&&sel.t==='w'&&sel.i===i,c=on?'#1f6fd1':'#111';
+  o+=`<line x1="${w.a[0]}" y1="${w.a[1]}" x2="${w.b[0]}" y2="${w.b[1]}" stroke="${c}" stroke-width="${on?7:5}" stroke-linecap="round"${w.t==='e'?' stroke-dasharray="20 14"':''}/>`;
+  if(edit)o+=`<line data-sw="${i}" x1="${w.a[0]}" y1="${w.a[1]}" x2="${w.b[0]}" y2="${w.b[1]}" stroke="transparent" stroke-width="36" style="cursor:pointer"/>`;
+  const mx=(w.a[0]+w.b[0])/2,my=(w.a[1]+w.b[1])/2,dx=w.b[0]-w.a[0],dy=w.b[1]-w.a[1],L=Math.hypot(dx,dy)||1,nx=-dy/L*30,ny=dx/L*30;
+  const tag=w.t==='e'&&(w.s||[]).length?' '+w.s.map(k=>k==='lg'?'LG':'CL').join('+'):'';
+  const side=Math.abs(dx)<Math.abs(dy)?(nx>0?'start':'end'):'middle';
+  o+=`<text x="${(mx+nx).toFixed(1)}" y="${(my+ny+9).toFixed(1)}" text-anchor="${side}" font-family="Arial,sans-serif" font-size="28" font-weight="700" fill="${c}" stroke="#fff" stroke-width="7" paint-order="stroke">${w.l?esc(String(w.l))+"'":'?'}${esc(tag)}</text>`});
+ (s.d||[]).forEach((d0,i)=>{const d={x:skN(d0.x),y:skN(d0.y),e:String(d0.e||'').replace(/[^A-Z]/g,'').slice(0,8),dir:d0.dir},on=sel&&sel.t==='d'&&sel.i===i,c=on?'#1f6fd1':'#111',v=Object.prototype.hasOwnProperty.call(SKDIR,d.dir)?SKDIR[d.dir]:null;
+  if(v)o+=`<line x1="${d.x+v[0]*20}" y1="${d.y+v[1]*20}" x2="${d.x+v[0]*62}" y2="${d.y+v[1]*62}" stroke="${c}" stroke-width="4" marker-end="url(#skar)"/>`;
+  o+=`<g${edit?` data-sd="${i}" style="cursor:pointer"`:''}><circle cx="${d.x}" cy="${d.y}" r="17" fill="#fff" stroke="${c}" stroke-width="4"/><path d="M${d.x-10} ${d.y-10}L${d.x+10} ${d.y+10}M${d.x+10} ${d.y-10}L${d.x-10} ${d.y+10}" stroke="${c}" stroke-width="4"/>${edit?`<circle cx="${d.x}" cy="${d.y}" r="30" fill="transparent"/>`:''}</g>`;
+  if(d.e){const r=d.x<SKW-150;o+=`<text x="${d.x+(r?26:-26)}" y="${d.y-24}" text-anchor="${r?'start':'end'}" font-family="Courier New,monospace" font-size="28" font-weight="700" fill="${c}" stroke="#fff" stroke-width="7" paint-order="stroke">${esc(d.e)}</text>`}});
+ if(edit&&skStart)o+=`<circle cx="${skN(skStart[0])}" cy="${skN(skStart[1])}" r="11" fill="#1f6fd1"/>`;
+ return o}
+const skPaper=(s,edit)=>`<svg ${edit?'id="sksv" ':''}class="skpaper" viewBox="0 0 ${SKW} ${SKH}" role="img" aria-label="Sketch of the building">${skSVG(s,edit)}</svg>`;
+function skPanel(){const el=$('#skp');if(!el)return;const s=skGet(cur);
+ if(!skSel){el.innerHTML=`<p class="hint">${skMode==='wall'?(skStart?'Tap the next corner. <button class="btn sm" data-act="skDone">Finish this line</button>':'Tap a corner to start, then tap each next corner. Tap a line to edit it.'):skMode==='ds'?'Tap where each downspout goes.':'Tap a line or a downspout to edit it.'}</p>`;return}
+ if(skSel.t==='w'){const w=s.w[skSel.i];if(!w){skSel=null;return skPanel()}
+  el.innerHTML=`<div class="skrow"><label class="f" for="sklen" style="margin:0">Line ${skSel.i+1} length</label><input id="sklen" type="number" inputmode="decimal" min="0" max="999" step="0.5" value="${w.l||''}" style="width:96px"><span>ft</span><button class="btn sm danger" data-act="skDel">Delete</button></div>
+  <div class="skrow"><button class="btn sm ${w.t!=='e'?'vis':''}" data-act="skType" data-t="n">━ New gutter</button><button class="btn sm ${w.t==='e'?'vis':''}" data-act="skType" data-t="e">╍ Existing (stays)</button></div>
+  ${w.t==='e'?`<div class="skrow"><span class="hint">Service on this line:</span>${Object.entries(SKSV).map(([k,n])=>`<button class="btn sm ${(w.s||[]).includes(k)?'vis':''}" data-act="skSvc" data-k="${k}">${n}</button>`).join('')}</div>`:''}`;return}
+ const d=s.d[skSel.i];if(!d){skSel=null;return skPanel()}
+ el.innerHTML=`<div class="skrow"><span>Elbows</span><b class="skcode">${esc(d.e)||'—'}</b>${SKEL.map(k=>`<button class="btn sm" data-act="skEl" data-e="${k}">+${k}</button>`).join('')}<button class="btn sm" data-act="skEl" data-e="" aria-label="Remove the last elbow">⌫</button></div>
+ <div class="skrow"><span>Water goes</span>${Object.keys(SKDIR).map(k=>`<button class="btn sm ${d.dir===k?'vis':''}" data-act="skDir" data-d="${k}" aria-label="Water goes ${k}">${SKARW[k]}</button>`).join('')}<button class="btn sm danger" data-act="skDel">Delete</button></div>`}
+function skDraw(full){const sv=$('#sksv');if(sv)sv.innerHTML=skSVG(skGet(cur),true);if(full!==false)skPanel();const t=$('#sktot');if(t)t.innerHTML=skTable(skGet(cur));
+ document.querySelectorAll('[data-act="skMode"]').forEach(b=>b.classList.toggle('vis',b.dataset.m===skMode));const sn=$('[data-act="skSnap"]');if(sn)sn.classList.toggle('vis',!!skGet(cur).snap)}
+function skBind(){const sv=$('#sksv');if(!sv||locked())return;
+ sv.addEventListener('click',e=>{const s=skGet(cur),hit=e.target.closest('[data-sw],[data-sd]');
+  const q=sv.createSVGPoint();q.x=e.clientX;q.y=e.clientY;const c=q.matrixTransform(sv.getScreenCTM().inverse());
+  // Drawing lines: a tap near an existing corner uses that corner (closes the outline, also without snap).
+  let near=null;if(skMode==='wall'){let best=34;s.w.forEach(w=>[w.a,w.b].forEach(pt=>{const dd=Math.hypot(pt[0]-c.x,pt[1]-c.y);if(dd<best){best=dd;near=pt}}))}
+  if(hit&&!near){skSel=hit.dataset.sw!=null?{t:'w',i:+hit.dataset.sw}:{t:'d',i:+hit.dataset.sd};skStart=null;skDraw();return}
+  let x=Math.max(0,Math.min(SKW,c.x)),y=Math.max(0,Math.min(SKH,c.y));if(near){x=near[0];y=near[1]}else if(s.snap){x=Math.round(x/SKG)*SKG;y=Math.round(y/SKG)*SKG}else{x=Math.round(x);y=Math.round(y)}
+  if(skMode==='ds'){if(s.d.length>=80)return;s.d.push({x,y,e:'',dir:''});skSel={t:'d',i:s.d.length-1};skDraw();save();return}
+  if(skMode==='wall'){if(!skStart){skStart=[x,y];skSel=null;skDraw();return}
+   if(x===skStart[0]&&y===skStart[1])return;if(s.w.length>=300)return;
+   s.w.push({a:skStart,b:[x,y],l:0,t:skType,s:[]});skSel={t:'w',i:s.w.length-1};skStart=[x,y];skDraw();save();const l=$('#sklen');if(l)l.focus({preventScroll:true});return}
+  skSel=null;skDraw()})}
+async function skEditor(){const j=cur,lk=locked(),s=lk?(j.sketch||{w:[],d:[],notes:''}):skGet(j);
+ app.innerHTML=topbar('backSite',esc(site.condo||site.address||''),`Bldg ${esc(j.bldg)} · v${j.version}${site.type==='job'?' · WO '+esc(site.wo):''}`,lk?'':`<button class="btn sm" data-act="editForm">${t('details')}</button>`)+`
+ <div class="ed"><div>
+ ${tabsHTML(j,lk)}
+ ${j.status==='signed'?`<p class="banner">${t('locked')}</p>`:lk?`<p class="banner gray">Draft by ${esc(j.authorName)}. Only the author can edit it.</p>`:`<p class="savest" id="savest">Changes save automatically.</p>`}
+ ${lk?'':`<div class="sktb"><button class="btn sm" data-act="skMode" data-m="wall">Line</button><button class="btn sm" data-act="skMode" data-m="ds">(x) Downspout</button><button class="btn sm" data-act="skMode" data-m="sel">Select</button><span class="skgap"></span><button class="btn sm" data-act="skSnap">Snap to grid</button><button class="btn sm" data-act="skUndo">Undo</button></div>`}
+ <div class="skwrap">${skPaper(s,!lk)}</div>
+ <p class="hint">${SKLEG}</p>
+ ${lk?'':'<div id="skp"></div>'}
+ <label class="f" for="sknotes">Sketch notes</label>${lk?`<p style="white-space:pre-wrap;margin:0">${esc(s.notes)||t('none')}</p>`:`<textarea id="sknotes" rows="3" maxlength="2000" placeholder="Anything the crew should know about this house">${esc(s.notes)}</textarea>`}
+ </div><aside class="side"><div class="bomc" style="margin-top:0"><h3>Sketch totals</h3><div id="sktot">${skTable(s)}</div></div>
+ <button class="btn vis big" data-act="review">${j.status==='signed'?t('viewDoc'):lk?'View':t('review')}</button></aside></div>${foot()}`;
+ if(!lk){skBind();skDraw()}}
+function tabsHTML(j,lk){const v=j.views[vi];return `<div class="tabs">${j.views.map((x,i)=>`<button class="tab ${i===vi?'on':''}" data-act="view" data-i="${i}">${esc(x.name)}</button>`).join('')}${!lk||skOn(j)?`<button class="tab ${vi==='sk'?'on':''}" data-act="skTab">✏ Sketch</button>`:''}${lk||(vi!=='sk'&&!v)?'':`<label class="tab">+ ${t('addPhoto')}<input type="file" accept="image/*" class="ph" hidden></label>`}</div>`}
+async function skImage(s){const c=document.createElement('canvas');c.width=1500;c.height=1050;const x=c.getContext('2d');
+ const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1050" viewBox="0 0 ${SKW} ${SKH}">${skSVG(s,false)}</svg>`;
+ x.drawImage(await loadImg('data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg)),0,0,1500,1050);return c.toDataURL('image/jpeg',0.9)}
+// Sketch page for the PDFs (plan and completion).
+async function skPdfPage(d,s,title,W,H,M){d.addPage();let y=54;d.setFont('helvetica','bold');d.setFontSize(14);d.text(title,M,y);y+=12;
+ const img=await skImage(s),w=W-2*M,h=w*SKH/SKW;d.addImage(img,'JPEG',M,y,w,h);d.setDrawColor(180);d.rect(M,y,w,h);y+=h+14;
+ d.setFont('helvetica','normal');d.setFontSize(9);d.setTextColor(90);d.splitTextToSize(SKLEG,W-2*M).forEach(l=>{d.text(l,M,y);y+=12});d.setTextColor(0);y+=6;
+ d.setFontSize(10);skRows(s).forEach(([k,v])=>{d.setFont('helvetica','bold');d.text(k,M,y);d.setFont('helvetica','normal');d.text(v,M+230,y);y+=14});
+ if(String(s.notes||'').trim()){y+=6;d.setFont('helvetica','bold');d.text('Sketch notes',M,y);y+=14;d.setFont('helvetica','normal');d.splitTextToSize(s.notes,W-2*M).forEach(l=>{if(y>H-70){d.addPage();y=54}d.text(l,M,y);y+=14})}}
 
 // ─── Editor (photo + pieces). Only the author edits a draft; signed versions are locked. ───
 const locked=()=>!cur||cur.status==='signed'||cur.authorUid!==session.uid;
@@ -610,10 +687,11 @@ async function openProof(id,sid){
 async function editor(){
   const j=cur;app.innerHTML=topbar('backSite',esc(site.condo||site.address||''),`Bldg ${esc(j.bldg)} · v${j.version}${site.type==='job'?' · WO '+esc(site.wo):''}`)+`<section class="wrap"><div class="spin">Loading photos…</div></section>`;
   await loadPhotos(j);if(cur!==j)return;
+  if(vi==='sk'){skEditor();return}
   const v=j.views[vi],lk=locked();
   app.innerHTML=topbar('backSite',esc(site.condo||site.address||''),`Bldg ${esc(j.bldg)} · v${j.version}${site.type==='job'?' · WO '+esc(site.wo):''}`,lk?'':`<button class="btn sm" data-act="editForm">${t('details')}</button>`)+`
  <div class="ed"><div>
- <div class="tabs">${j.views.map((x,i)=>`<button class="tab ${i===vi?'on':''}" data-act="view" data-i="${i}">${esc(x.name)}</button>`).join('')}${lk||!v?'':`<label class="tab">+ ${t('addPhoto')}<input type="file" accept="image/*" class="ph" hidden></label>`}</div>
+ ${tabsHTML(j,lk)}
  ${j.status==='signed'?`<p class="banner">${t('locked')}</p>`:lk?`<p class="banner gray">Draft by ${esc(j.authorName)}. Only the author can edit it.</p>`:`<p class="savest" id="savest">Changes save automatically.</p>`}
  ${v?`<div class="vrow">${lk?'':`<input id="vname" value="${esc(v.name)}" aria-label="${t('photoName')}" maxlength="40">`}<label class="zm">${t('zoom')}<input type="range" id="zoom" min="1" max="3" step="0.25" value="${zoom}"></label><button class="btn sm ghost" data-act="openPhoto">Open original photo</button>${lk?'':`<button class="btn sm ghost" data-act="delView">${t('delPhoto')}</button>`}</div>
  <div class="stage" id="stage"><svg id="sv" viewBox="0 0 ${v.w} ${v.h}" style="width:${zoom*100}%"><image href="${photoSrc(v)}" width="${v.w}" height="${v.h}"/><g id="lay"></g></svg></div>`
@@ -667,6 +745,7 @@ async function compView(){const c=comp,p=compPlan,lk=compLocked();
    ${p.views.map((v,i)=>`<h3>${esc(v.name)}</h3><div class="cmp"><figure><figcaption>Plan v${p.version}</figcaption>${planSvg(p,v)}</figure><div>${after(i).map(afterFig).join('')}${addBtn(i)}</div></div>`).join('')}
    ${after(-1).length||!lk?`<h3>Other photos</h3><div class="cmp">${after(-1).map(afterFig).join('')}${addBtn(-1)}</div>`:''}
    <p id="cphmsg" class="msg" role="status"></p>
+   ${skOn(p)?`<h2>Sketch</h2><div class="skwrap">${skPaper(p.sketch,false)}</div><p class="hint">${SKLEG}</p>${skTable(p.sketch)}${String(p.sketch.notes||'').trim()?`<p style="white-space:pre-wrap">${esc(p.sketch.notes)}</p>`:''}`:''}
    <h2>Check each piece</h2>${lk?'':`<button class="btn" data-act="cAllOk">All as planned</button>`}
    <div id="plist">${pcs.map(x=>pieceHTML(x,nums,lk)).join('')}</div>
    <h3>Notes</h3>${lk?`<p style="white-space:pre-wrap;margin:0">${esc(c.notes)||'None'}</p>`:`<textarea id="cnotes" rows="3" maxlength="4000" aria-label="Notes">${esc(c.notes)}</textarea>`}
@@ -748,6 +827,7 @@ async function makeCompPDF(c,p){const s=sdc(c);const{jsPDF}=window.jspdf;const d
   label(`Plan (signed v${p.version})`);fit(await viewImage(p,v),v.w,v.h,300);
   for(const x of c.views.filter(z=>z.of===i)){label(x.name);const src=photoSrc(x);if(src)fit(src,x.w,x.h,300)}}
  const other=c.views.filter(z=>z.of===-1||!p.views[z.of]);if(other.length){d.addPage();y=54;d.setFont('helvetica','bold');d.setFontSize(14);d.text('Other photos',M,y);y+=18;for(const x of other){label(x.name);const src=photoSrc(x);if(src)fit(src,x.w,x.h,300)}}
+ if(skOn(p))await skPdfPage(d,p.sketch,`Sketch (signed plan v${p.version})`,W,H,M);
  d.addPage();y=54;sec('Crew certification');para(CSTMT);y+=10;
  if(c.sig){ensure(150);d.setFont('helvetica','bold');d.setFontSize(10);d.text('Installation crew',M,y);y+=8;d.setDrawColor(180);d.rect(M,y,260,100);d.addImage(c.sig.img,'PNG',M+4,y+4,252,92);y+=116;d.setFont('helvetica','normal');d.text(`${c.sig.name}   |   ${c.signedAt?fmtEn(c.signedAt):''}`,M,y);y+=24;
   sec('Integrity');para('SHA-256 of the signed completion: '+c.hash);para('SHA-256 of the signed plan it refers to: '+p.hash);para('Device: '+(c.sig.device||'-'))}
@@ -762,6 +842,7 @@ function review(){const j=cur,site=sd(j),sg=j.status==='signed',lk=locked(),nums
  app.innerHTML=topbar('toEditor',sg?t('viewDoc'):lk?'Draft':t('review'),`Bldg ${esc(j.bldg)} · v${j.version}`)+`
  <section class="wrap">${site.client?`<div class="prep"><span class="hint">Prepared for</span><b>${esc(site.client.name)}</b>${clientLines(site.client).map(x=>`<span>${esc(x)}</span>`).join('')}</div>`:''}<h2>${t('summary')}</h2><dl class="sum">${row(t('address'),site.address)}${row(t('condo'),site.condo)}${row(t('wo'),site.type==='job'?site.wo:'Site visit ('+(KIND[site.kind]||'')+')')}${row(t('bldg'),j.bldg)}${row(t('model'),j.model)}${row('Version','v'+j.version)}<dt>GPS</dt><dd>${gpsTxt(j.gps)}</dd></dl>
  <h3>${t('bom')}</h3>${bomHTML(j)}
+ ${skOn(j)?`<h3>Sketch</h3><div class="skwrap">${skPaper(j.sketch,false)}</div><p class="hint">${SKLEG}</p>${skTable(j.sketch)}${String(j.sketch.notes||'').trim()?`<p style="white-space:pre-wrap">${esc(j.sketch.notes)}</p>`:''}`:''}
  <h3>${t('notes')}</h3><p style="white-space:pre-wrap;margin:0">${esc(j.notes)||t('none')}</p>
  ${(()=>{const tl=[];j.views.forEach(v=>v.items.forEach(it=>{if(it.k==='tx'&&(it.text||'').trim())tl.push(`<li>(${esc(v.name)}) ${esc(it.text)}</li>`)}));return tl.length?`<h3>${t('photoNotes')}</h3><ul style="white-space:pre-wrap">${tl.join('')}</ul>`:''})()}<h3>${t('pieceNotes')}</h3>${pn.length?`<ul>${pn.join('')}</ul>`:`<p class="hint">${t('none')}</p>`}
  ${sg?`<h2>${t('signed')}</h2><div class="two"><div><p class="hint">${t('supSig')}</p><img class="sigimg" src="${j.sig.sup}" alt=""><p>${esc(j.sig.supName)}</p></div><div><p class="hint">Verified by</p><img class="sigimg" src="${j.sig.inst}" alt=""><p>${esc(j.sig.instName)}</p></div></div>
@@ -796,23 +877,23 @@ async function sharePdf(){const m=$('#pmsg'),j=cur,site=sd(j);
   try{await navigator.share({files:[file],title:subj,text:`${subj}\nSigned by ${j.sig?.supName||'-'} (site supervisor) and ${j.sig?.instName||'-'}. Integrity (SHA-256): ${j.hash}`});m.textContent='';}
   catch(e){if(e&&e.name==='AbortError'){m.textContent=''}else{console.log(e);m.textContent='Sharing is not available here. Use Download PDF.'}}}
 // The hash covers everything shown in the document; photos are immutable in the database.
-const canon=j=>JSON.stringify({siteId:j.siteId,wo:j.wo||'',condo:j.condo||'',address:j.address||'',client:j.client||null,issuer:j.issuer||null,bldg:j.bldg,model:j.model||'',notes:j.notes||'',gps:j.gps||null,version:j.version,prevId:j.prevId||'',views:j.views,sig:j.sig&&{supName:j.sig.supName,instName:j.sig.instName,sup:j.sig.sup,inst:j.sig.inst}});
+const canon=j=>JSON.stringify({siteId:j.siteId,wo:j.wo||'',condo:j.condo||'',address:j.address||'',client:j.client||null,issuer:j.issuer||null,bldg:j.bldg,model:j.model||'',notes:j.notes||'',gps:j.gps||null,version:j.version,prevId:j.prevId||'',views:j.views,...(skOn(j)?{sketch:j.sketch}:{}),sig:j.sig&&{supName:j.sig.supName,instName:j.sig.instName,sup:j.sig.sup,inst:j.sig.inst}});
 async function finalize(){const sn=$('#supName').value.trim().slice(0,80),err=$('#serr');
- if(!cur.views.some(v=>v.items.length)){err.textContent=t('needPieces');return}
+ if(!cur.views.some(v=>v.items.length)&&!skOn(cur)){err.textContent=t('needPieces');return}
  if(!sn||!pads.S.has()||!pads.I.has()){err.textContent=t('needSig');return}
  const b=$('#finBtn');b.disabled=true;b.textContent='Signing…';
  const sig={supName:sn,instName:session.name,sup:pads.S.data(),inst:pads.I.data(),device:(navigator.userAgent||'').slice(0,160)+` | ${screen.width}x${screen.height}`};
  const j={...cur,sig,wo:site.wo||'',condo:site.condo||'',address:site.address||'',client:site.client||null,issuer:issuerSnap()};const hash=await sha(canon(j));
  try{
   await flushSave();
-  await fbUpdate(`fpSites/${cur.siteId}/proofs/${cur.id}`,{status:'signed',sig,hash,signedAt:now(),views:cur.views,notes:cur.notes||'',updatedAt:now(),wo:j.wo,condo:j.condo,address:j.address,client:j.client,issuer:j.issuer});
+  await fbUpdate(`fpSites/${cur.siteId}/proofs/${cur.id}`,{status:'signed',sig,hash,signedAt:now(),views:cur.views,...(cur.sketch?{sketch:cur.sketch}:{}),notes:cur.notes||'',updatedAt:now(),wo:j.wo,condo:j.condo,address:j.address,client:j.client,issuer:j.issuer});
   Object.assign(cur,{status:'signed',sig,hash,signedAt:new Date(),wo:j.wo,condo:j.condo,address:j.address,client:j.client,issuer:j.issuer});
   const fresh=await fbGet(`fpSites/${cur.siteId}/proofs/${cur.id}`).catch(()=>null);if(fresh)Object.assign(cur,fresh);
   review();
  }catch(e){console.log(e);b.disabled=false;b.textContent=t('finalize');err.textContent='Could not sign. Check your connection and try again.';}}
 function mailto(j){const site=sd(j);const b=bomRows(j,'en').map(x=>`- ${x.n}: ${x.q}`).join('\n');
  const s=`Gutter scope - ${site.type==='job'?'WO '+site.wo+' - ':''}Bldg ${j.bldg} - ${site.condo||site.address}`;
- const body=`Signed gutter scope attached (PDF).\n${site.client?'Prepared for: '+site.client.name+'\n':''}\nAddress: ${site.address||'-'}\nCommunity: ${site.condo||'-'}\nWork order: ${site.type==='job'?site.wo:'Site visit'}\nBuilding: ${j.bldg} (v${j.version})\nSite supervisor: ${j.sig?j.sig.supName:'-'}\nVerified by: ${j.sig?j.sig.instName:'-'}\nSigned: ${j.signedAt?fmtEn(j.signedAt):'-'}\n\nMaterials:\n${b}\n\nIntegrity (SHA-256): ${j.hash||'-'}\n\n${APP.name} · ${APP.vendor}`;
+ const body=`Signed gutter scope attached (PDF).\n${site.client?'Prepared for: '+site.client.name+'\n':''}\nAddress: ${site.address||'-'}\nCommunity: ${site.condo||'-'}\nWork order: ${site.type==='job'?site.wo:'Site visit'}\nBuilding: ${j.bldg} (v${j.version})\nSite supervisor: ${j.sig?j.sig.supName:'-'}\nVerified by: ${j.sig?j.sig.instName:'-'}\nSigned: ${j.signedAt?fmtEn(j.signedAt):'-'}\n\nMaterials:\n${b}\n${skOn(j)?'\nSketch:\n'+skRows(j.sketch).map(x=>`- ${x[0]}: ${x[1]}`).join('\n')+'\n':''}\nIntegrity (SHA-256): ${j.hash||'-'}\n\n${APP.name} · ${APP.vendor}`;
  return `mailto:${encodeURIComponent(ls('boss'))}?subject=${encodeURIComponent(s)}&body=${encodeURIComponent(body)}`}
 
 // ─── PDF: customer header, 29 Cyber credit footer ───
@@ -836,6 +917,7 @@ async function makePDF(j){const site=sd(j);const{jsPDF}=window.jspdf;const d=new
  sec('Piece notes');if(pn.length)pn.forEach(para);else para('None');
  const tl=[];j.views.forEach(v=>v.items.forEach(it=>{if(it.k==='tx'&&(it.text||'').trim())tl.push(`(${v.name}) ${it.text.replace(/\n/g,' / ')}`)}));if(tl.length){sec('Text on photos');tl.forEach(para)}
  for(const v of j.views){d.addPage();y=54;d.setFont('helvetica','bold');d.setFontSize(14);d.text(v.name,M,y);y+=12;const img=await viewImage(j,v),r=Math.min((W-2*M)/v.w,(H-y-80)/v.h);d.addImage(img,'JPEG',M,y,v.w*r,v.h*r);y+=v.h*r+16;d.setFont('helvetica','normal');d.setFontSize(9);d.setTextColor(100);d.text('Numbers on the photo match the piece notes on page 1.',M,y);d.setTextColor(0)}
+ if(skOn(j))await skPdfPage(d,j.sketch,'Sketch',W,H,M);
  d.addPage();y=54;sec('Approval');para(t('stmt'));y+=10;
  const sig=(lab,img,nm)=>{ensure(150);d.setFont('helvetica','bold');d.setFontSize(10);d.text(lab,M,y);y+=8;d.setDrawColor(180);d.rect(M,y,260,100);if(img)d.addImage(img,'PNG',M+4,y+4,252,92);y+=116;d.setFont('helvetica','normal');d.text(`${nm||'-'}   |   ${j.signedAt?fmtEn(j.signedAt):''}`,M,y);y+=24};
  if(j.sig){sig('Site supervisor',j.sig.sup,j.sig.supName);sig('Verified by',j.sig.inst,j.sig.instName);sec('Integrity');para('SHA-256 of the signed record: '+j.hash);para('Device: '+(j.sig.device||'-'))}
@@ -890,6 +972,16 @@ app.addEventListener('click',async e=>{const b=e.target.closest('[data-act]');if
  else if(a==='editForm')proofForm(cur);
  else if(a==='toEditor')editor();
  else if(a==='view'){vi=+b.dataset.i;selId=null;editor()}
+ else if(a==='skTab'){vi='sk';selId=null;skSel=null;skStart=null;editor()}
+ else if(a==='skMode'&&!locked()){skMode=b.dataset.m;skStart=null;skSel=null;skDraw()}
+ else if(a==='skDone'){skStart=null;skDraw()}
+ else if(a==='skSnap'&&!locked()){const s=skGet(cur);s.snap=!s.snap;skDraw();save()}
+ else if(a==='skUndo'&&!locked()){const s=skGet(cur);if(skMode==='ds')s.d.pop();else{const w=s.w.pop();skStart=w&&skStart?w.a:null}skSel=null;skDraw();save()}
+ else if(a==='skDel'&&!locked()&&skSel){const s=skGet(cur);(skSel.t==='w'?s.w:s.d).splice(skSel.i,1);skSel=null;skStart=null;skDraw();save()}
+ else if(a==='skType'&&!locked()&&skSel&&skSel.t==='w'){const w=skGet(cur).w[skSel.i];w.t=b.dataset.t;skType=w.t;if(w.t!=='e')w.s=[];skDraw();save()}
+ else if(a==='skSvc'&&!locked()&&skSel&&skSel.t==='w'){const w=skGet(cur).w[skSel.i],k=b.dataset.k;w.s=(w.s||[]).includes(k)?w.s.filter(x=>x!==k):[...(w.s||[]),k];skDraw();save()}
+ else if(a==='skEl'&&!locked()&&skSel&&skSel.t==='d'){const d=skGet(cur).d[skSel.i],e2=b.dataset.e;d.e=e2?(d.e+e2).slice(0,8):d.e.slice(0,-1);skDraw();save()}
+ else if(a==='skDir'&&!locked()&&skSel&&skSel.t==='d'){const d=skGet(cur).d[skSel.i];d.dir=d.dir===b.dataset.d?'':b.dataset.d;skDraw();save()}
  else if(a==='openPhoto')openPhoto(cur.views[vi]);
  else if(a==='delView')arm(b,async()=>{cur.views.splice(vi,1);vi=Math.max(0,vi-1);selId=null;await persist(cur);editor()});
  else if(a==='add')addPiece(b.dataset.k);
@@ -910,6 +1002,8 @@ app.addEventListener('input',e=>{const id=e.target.id,v=e.target.value,it=selId&
  if(id==='vname'){cur.views[vi].name=v.slice(0,40);save();const tb=document.querySelectorAll('.tab')[vi];if(tb)tb.textContent=v;return}
  if(id==='zoom'){zoom=+v;$('#sv').style.width=zoom*100+'%';return}
  if(id==='curColor'){cur.curColor=v.trim().slice(0,40);save();return}
+ if(id==='sklen'&&skSel&&skSel.t==='w'){const w=skGet(cur).w[skSel.i];if(w){w.l=Math.max(0,Math.min(999,Math.round((parseFloat(v)||0)*2)/2));skDraw(false);save()}return}
+ if(id==='sknotes'){skGet(cur).notes=v.slice(0,2000);save();return}
  if(!it)return;
  if(id==='s_text')it.text=v.slice(0,300);else if(id==='s_color')it.color=v.slice(0,40);else if(id==='s_name')it.name=v.slice(0,60);else if(id==='s_qty')it.qty=Math.max(1,Math.min(999,parseInt(v)||1));else if(id==='s_sz')it.sz=+v;else if(id==='s_note'){it.note=v.slice(0,300);save();return}else return;
  drawLay();const bm=$('#bom');if(bm)bm.innerHTML=bomHTML(cur);save()});
