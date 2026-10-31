@@ -282,7 +282,7 @@ function arm(b,fn){if(b.dataset.armed==='1'){fn();return}b.dataset.armed='1';con
 // fpSites/{id}           site visit (type 'visit', author + managers only) or job (type 'job', managers create)
 // fpSites/{id}/proofs     one signed verification per building version (locked once signed)
 // fpSites/{id}/photos     compressed site photos (immutable)
-const APP={name:'29Cyber FieldProof',version:'3.1.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber FieldProof',version:'3.1.2',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={crewDomain:'crew.29cyber.internal'};
 let TENANT=null;
 const normCode=v=>String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
@@ -610,23 +610,33 @@ function knownColors(){const set=new Set((ls('colors')||'').split('|').filter(Bo
 // Solid line = new gutter. Dashed line = existing gutter that stays (cleaning / Leaf Guard).
 // (x) = downspout, with its elbow letters and where the water goes. Signed with the plan. ───
 const SKW=1000,SKH=700,SKG=25,SKEL=['A','B','C','D'],SKSV={lg:'Leaf Guard',cl:'Cleaning'},SKDIR={u:[0,-1],r:[1,0],d:[0,1],l:[-1,0]},SKARW={u:'↑',r:'→',d:'↓',l:'←'};
-let skMode='wall',skType='n',skSel=null,skStart=null;
+let skMode='wall',skType='n',skFl=1,skSel=null,skStart=null;
 const skOn=j=>!!(j&&j.sketch&&(((j.sketch.w||[]).length)||((j.sketch.d||[]).length)||String(j.sketch.notes||'').trim()));
 function skGet(j){if(!j.sketch||typeof j.sketch!=='object')j.sketch={w:[],d:[],notes:'',snap:true};const s=j.sketch;s.w=s.w||[];s.d=s.d||[];s.notes=s.notes||'';if(s.snap===undefined)s.snap=true;return s}
-function skTotals(s){const r={n:0,e:0,lg:0,cl:0,ds:(s.d||[]).length,el:{}};(s.w||[]).forEach(w=>{const l=+w.l||0;if(w.t==='e'){r.e+=l;(w.s||[]).forEach(k=>{if(k in SKSV)r[k]+=l})}else r.n+=l});(s.d||[]).forEach(d=>String(d.e||'').split('').forEach(c=>{r.el[c]=(r.el[c]||0)+1}));return r}
-function skRows(s){const r=skTotals(s),o=[],f=x=>Math.round(x*10)/10+' ft';if(r.n)o.push(['New gutter (solid line)',f(r.n)]);if(r.e)o.push(['Existing gutter, stays (dashed line)',f(r.e)]);if(r.lg)o.push(['Leaf Guard',f(r.lg)]);if(r.cl)o.push(['Cleaning',f(r.cl)]);if(r.ds)o.push(['Downspouts',String(r.ds)]);SKEL.forEach(k=>{if(r.el[k])o.push(['Elbow '+k,String(r.el[k])])});return o}
+// v3.1.2: each line is a wall with 1 or 2 stories (2 parallel lines), new or existing
+// gutter, and services (Leaf Guard, Cleaning) on either kind. Totals per story.
+const skFloors=x=>+x===2?2:1;
+function skTotals(s){const z=()=>({1:0,2:0}),r={n:z(),e:z(),lg:z(),cl:z(),ds:z(),el:{}};
+ (s.w||[]).forEach(w=>{const l=+w.l||0,f=skFloors(w.f);r[w.t==='e'?'e':'n'][f]+=l;(w.s||[]).forEach(k=>{if(k in SKSV)r[k][f]+=l})});
+ (s.d||[]).forEach(d=>{r.ds[skFloors(d.f)]++;String(d.e||'').split('').forEach(c=>{r.el[c]=(r.el[c]||0)+1})});return r}
+function skRows(s){const r=skTotals(s),o=[],ft=x=>Math.round(x*10)/10+' ft',
+  add=(name,v,unit)=>{if(v[1]||v[2]){if(v[1]&&v[2]){o.push([name+' · 1 story',unit(v[1])]);o.push([name+' · 2 stories',unit(v[2])])}else o.push([name+(v[2]?' · 2 stories':' · 1 story'),unit(v[1]||v[2])])}};
+ add('New gutter',r.n,ft);add('Existing gutter (stays)',r.e,ft);add('Leaf Guard',r.lg,ft);add('Cleaning',r.cl,ft);add('Downspouts',r.ds,String);
+ SKEL.forEach(k=>{if(r.el[k])o.push(['Elbow '+k,String(r.el[k])])});return o}
 function skTable(s){const r=skRows(s);return r.length?`<table class="bom">${r.map(x=>`<tr><td>${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join('')}</table>`:`<p class="hint">Nothing drawn yet.</p>`}
-const SKLEG='Solid line: new gutter · Dashed line: existing gutter that stays · (x) downspout, letters = elbows, arrow = where the water goes';
+const SKLEG='Solid line: new gutter · Dashed line: existing gutter that stays · Double line: 2 stories · Green dots + LG: Leaf Guard · CL: cleaning · (x) downspout, letters = elbows, arrow = where the water goes';
 // One drawing for the editor, the review page, the crew and the PDF. edit=true adds the grid and tap targets.
 const skN=v=>{const n=+v;return Number.isFinite(n)?Math.round(Math.max(-SKW,Math.min(2*SKW,n))*10)/10:0};
 function skSVG(s,edit){const sel=edit?skSel:null;let o=`<defs><marker id="skar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#111"/></marker>${edit&&s.snap?`<pattern id="skg" width="${SKG}" height="${SKG}" patternUnits="userSpaceOnUse"><path d="M${SKG} 0H0V${SKG}" fill="none" stroke="#dde2e8" stroke-width="1"/></pattern>`:''}</defs><rect width="${SKW}" height="${SKH}" fill="#fff"/>${edit&&s.snap?`<rect width="${SKW}" height="${SKH}" fill="url(#skg)"/>`:''}`;
- (s.w||[]).forEach((w0,i)=>{const w={a:[skN((w0.a||[])[0]),skN((w0.a||[])[1])],b:[skN((w0.b||[])[0]),skN((w0.b||[])[1])],l:skN(w0.l),t:w0.t==='e'?'e':'n',s:(Array.isArray(w0.s)?w0.s:[]).filter(k=>k in SKSV)},on=sel&&sel.t==='w'&&sel.i===i,c=on?'#1f6fd1':'#111';
-  o+=`<line x1="${w.a[0]}" y1="${w.a[1]}" x2="${w.b[0]}" y2="${w.b[1]}" stroke="${c}" stroke-width="${on?7:5}" stroke-linecap="round"${w.t==='e'?' stroke-dasharray="20 14"':''}/>`;
+ (s.w||[]).forEach((w0,i)=>{const w={a:[skN((w0.a||[])[0]),skN((w0.a||[])[1])],b:[skN((w0.b||[])[0]),skN((w0.b||[])[1])],l:skN(w0.l),t:w0.t==='e'?'e':'n',f:skFloors(w0.f),s:(Array.isArray(w0.s)?w0.s:[]).filter(k=>k in SKSV)},on=sel&&sel.t==='w'&&sel.i===i,c=on?'#1f6fd1':'#111';
+  {const dx=w.b[0]-w.a[0],dy=w.b[1]-w.a[1],L=Math.hypot(dx,dy)||1,ux=-dy/L,uy=dx/L,dash=w.t==='e'?' stroke-dasharray="20 14"':'',ln=(k,sw)=>`<line x1="${(w.a[0]+ux*k).toFixed(1)}" y1="${(w.a[1]+uy*k).toFixed(1)}" x2="${(w.b[0]+ux*k).toFixed(1)}" y2="${(w.b[1]+uy*k).toFixed(1)}" stroke="${c}" stroke-width="${sw}" stroke-linecap="round"${dash}/>`;
+   if(w.s.includes('lg')){const k=w.f===2?-24:-17;o+=`<line x1="${(w.a[0]+ux*k).toFixed(1)}" y1="${(w.a[1]+uy*k).toFixed(1)}" x2="${(w.b[0]+ux*k).toFixed(1)}" y2="${(w.b[1]+uy*k).toFixed(1)}" stroke="#2E9D4F" stroke-width="7" stroke-linecap="round" stroke-dasharray="1 13"/>`}
+   o+=w.f===2?ln(-7,on?5:4)+ln(7,on?5:4):ln(0,on?7:5)}
   if(edit)o+=`<line data-sw="${i}" x1="${w.a[0]}" y1="${w.a[1]}" x2="${w.b[0]}" y2="${w.b[1]}" stroke="transparent" stroke-width="60" style="cursor:pointer"/>`;
   const mx=(w.a[0]+w.b[0])/2,my=(w.a[1]+w.b[1])/2,dx=w.b[0]-w.a[0],dy=w.b[1]-w.a[1],L=Math.hypot(dx,dy)||1,nx=-dy/L*34,ny=dx/L*34;
-  const tag=w.t==='e'&&(w.s||[]).length?' '+w.s.map(k=>k==='lg'?'LG':'CL').join('+'):'';
+  const tag=w.s.map(k=>k==='lg'?'<tspan fill="#2E9D4F"> LG</tspan>':' CL').join('');
   const side=Math.abs(dx)<Math.abs(dy)?(nx>0?'start':'end'):'middle';
-  o+=`<text${edit?` data-sw="${i}" style="cursor:pointer"`:''} x="${(mx+nx).toFixed(1)}" y="${(my+ny+13).toFixed(1)}" text-anchor="${side}" font-family="Arial,sans-serif" font-size="38" font-weight="700" fill="${c}" stroke="#fff" stroke-width="7" paint-order="stroke">${w.l?esc(String(w.l))+"'":'?'}${esc(tag)}</text>`});
+  o+=`<text${edit?` data-sw="${i}" style="cursor:pointer"`:''} x="${(mx+nx).toFixed(1)}" y="${(my+ny+13).toFixed(1)}" text-anchor="${side}" font-family="Arial,sans-serif" font-size="38" font-weight="700" fill="${c}" stroke="#fff" stroke-width="7" paint-order="stroke">${w.l?esc(String(w.l))+"'":'?'}${tag}</text>`});
  (s.d||[]).forEach((d0,i)=>{const d={x:skN(d0.x),y:skN(d0.y),e:String(d0.e||'').replace(/[^A-Z]/g,'').slice(0,8),dir:d0.dir},on=sel&&sel.t==='d'&&sel.i===i,c=on?'#1f6fd1':'#111',v=Object.prototype.hasOwnProperty.call(SKDIR,d.dir)?SKDIR[d.dir]:null;
   if(v)o+=`<line x1="${d.x+v[0]*20}" y1="${d.y+v[1]*20}" x2="${d.x+v[0]*62}" y2="${d.y+v[1]*62}" stroke="${c}" stroke-width="4" marker-end="url(#skar)"/>`;
   o+=`<g${edit?` data-sd="${i}" style="cursor:pointer"`:''}><circle cx="${d.x}" cy="${d.y}" r="17" fill="#fff" stroke="${c}" stroke-width="4"/><path d="M${d.x-10} ${d.y-10}L${d.x+10} ${d.y+10}M${d.x+10} ${d.y-10}L${d.x-10} ${d.y+10}" stroke="${c}" stroke-width="4"/>${edit?`<circle cx="${d.x}" cy="${d.y}" r="40" fill="transparent"/>`:''}</g>`;
@@ -638,13 +648,14 @@ function skPanel(){const el=$('#skp');if(!el)return;const s=skGet(cur);
  if(!skSel){el.innerHTML=`<p class="hint">${skMode==='wall'?(skStart?'Tap the next corner. <button class="btn sm" data-act="skDone">Finish this line</button>':'Tap a corner to start, then tap each next corner. Tap a line or its ? to type the length.'):skMode==='ds'?'Tap where each downspout goes, then pick its elbows here. Tap an existing (x) to edit it.':'Tap a line (or its ?) to type the length. Tap a (x) to set its elbows.'}</p>`;return}
  if(skSel.t==='w'){const w=s.w[skSel.i];if(!w){skSel=null;return skPanel()}
   el.innerHTML=`<div class="skrow"><label class="f" for="sklen" style="margin:0">Line ${skSel.i+1} length</label><input id="sklen" type="number" inputmode="decimal" min="0" max="999" step="0.5" value="${w.l||''}" style="width:96px"><span>ft</span><button class="btn sm danger" data-act="skDel">Delete</button></div>
-  <div class="skrow"><button class="btn sm ${w.t!=='e'?'vis':''}" data-act="skType" data-t="n">━ New gutter</button><button class="btn sm ${w.t==='e'?'vis':''}" data-act="skType" data-t="e">╍ Existing (stays)</button></div>
-  ${w.t==='e'?`<div class="skrow"><span class="hint">Service on this line:</span>${Object.entries(SKSV).map(([k,n])=>`<button class="btn sm ${(w.s||[]).includes(k)?'vis':''}" data-act="skSvc" data-k="${k}">${n}</button>`).join('')}</div>`:''}`;return}
+  <div class="skrow"><button class="btn sm ${w.t!=='e'?'vis':''}" data-act="skType" data-t="n">━ New gutter</button><button class="btn sm ${w.t==='e'?'vis':''}" data-act="skType" data-t="e">╍ Existing (stays)</button><span class="skgap"></span><button class="btn sm ${skFloors(w.f)===1?'vis':''}" data-act="skFl" data-f="1">1 story</button><button class="btn sm ${skFloors(w.f)===2?'vis':''}" data-act="skFl" data-f="2">═ 2 stories</button></div>
+  <div class="skrow"><span class="hint">Also on this line:</span>${Object.entries(SKSV).map(([k,n])=>`<button class="btn sm ${(w.s||[]).includes(k)?'vis':''}" data-act="skSvc" data-k="${k}">${n}</button>`).join('')}</div>`;return}
  const d=s.d[skSel.i];if(!d){skSel=null;return skPanel()}
- el.innerHTML=`<div class="skrow"><span>Elbows</span><b class="skcode">${esc(d.e)||'—'}</b>${SKEL.map(k=>`<button class="btn sm" data-act="skEl" data-e="${k}">+${k}</button>`).join('')}<button class="btn sm" data-act="skEl" data-e="" aria-label="Remove the last elbow">⌫</button></div>
+ el.innerHTML=`<div class="skrow"><span>Elbows</span><b class="skcode">${esc(d.e)||'—'}</b>${SKEL.map(k=>`<button class="btn sm" data-act="skEl" data-e="${k}">+${k}</button>`).join('')}<button class="btn sm" data-act="skEl" data-e="" aria-label="Remove the last elbow">⌫</button><span class="skgap"></span><button class="btn sm ${skFloors(d.f)===1?'vis':''}" data-act="skDsFl" data-f="1">1 story</button><button class="btn sm ${skFloors(d.f)===2?'vis':''}" data-act="skDsFl" data-f="2">2 stories</button></div>
  <div class="skrow"><span>Water goes</span>${Object.keys(SKDIR).map(k=>`<button class="btn sm ${d.dir===k?'vis':''}" data-act="skDir" data-d="${k}" aria-label="Water goes ${k}">${SKARW[k]}</button>`).join('')}<button class="btn sm danger" data-act="skDel">Delete</button></div>`}
 function skDraw(full){const sv=$('#sksv');if(sv)sv.innerHTML=skSVG(skGet(cur),true);if(full!==false)skPanel();const t=$('#sktot');if(t)t.innerHTML=skTable(skGet(cur));
  document.querySelectorAll('[data-act="skMode"]').forEach(b=>b.classList.toggle('vis',b.dataset.m===skMode));const sn=$('[data-act="skSnap"]');if(sn)sn.classList.toggle('vis',!!skGet(cur).snap)}
+function skNearFloors(s,x,y){let best=1e9,f=1;(s.w||[]).forEach(w=>{const ax=+w.a[0],ay=+w.a[1],bx=+w.b[0],by=+w.b[1],dx=bx-ax,dy=by-ay,L2=dx*dx+dy*dy||1,t=Math.max(0,Math.min(1,((x-ax)*dx+(y-ay)*dy)/L2)),dd=Math.hypot(ax+t*dx-x,ay+t*dy-y);if(dd<best){best=dd;f=skFloors(w.f)}});return f}
 function skBind(){const sv=$('#sksv');if(!sv||locked())return;
  sv.addEventListener('click',e=>{const s=skGet(cur),hit=e.target.closest('[data-sw],[data-sd]');
   const q=sv.createSVGPoint();q.x=e.clientX;q.y=e.clientY;const c=q.matrixTransform(sv.getScreenCTM().inverse());
@@ -652,10 +663,10 @@ function skBind(){const sv=$('#sksv');if(!sv||locked())return;
   let near=null;if(skMode==='wall'){let best=45;s.w.forEach(w=>[w.a,w.b].forEach(pt=>{const dd=Math.hypot(pt[0]-c.x,pt[1]-c.y);if(dd<best){best=dd;near=pt}}))}
   if(hit&&!near){skSel=hit.dataset.sw!=null?{t:'w',i:+hit.dataset.sw}:{t:'d',i:+hit.dataset.sd};skStart=null;skDraw();return}
   let x=Math.max(0,Math.min(SKW,c.x)),y=Math.max(0,Math.min(SKH,c.y));if(near){x=near[0];y=near[1]}else if(s.snap){x=Math.round(x/SKG)*SKG;y=Math.round(y/SKG)*SKG}else{x=Math.round(x);y=Math.round(y)}
-  if(skMode==='ds'){if(s.d.length>=80)return;s.d.push({x,y,e:'',dir:''});skSel={t:'d',i:s.d.length-1};skDraw();save();return}
+  if(skMode==='ds'){if(s.d.length>=80)return;s.d.push({x,y,e:'',dir:'',f:skNearFloors(s,x,y)});skSel={t:'d',i:s.d.length-1};skDraw();save();return}
   if(skMode==='wall'){if(!skStart){skStart=[x,y];skSel=null;skDraw();return}
    if(x===skStart[0]&&y===skStart[1])return;if(s.w.length>=300)return;
-   s.w.push({a:skStart,b:[x,y],l:0,t:skType,s:[]});skSel={t:'w',i:s.w.length-1};skStart=[x,y];skDraw();save();const l=$('#sklen');if(l)l.focus({preventScroll:true});return}
+   s.w.push({a:skStart,b:[x,y],l:0,t:skType,f:skFl,s:[]});skSel={t:'w',i:s.w.length-1};skStart=[x,y];skDraw();save();const l=$('#sklen');if(l)l.focus({preventScroll:true});return}
   skSel=null;skDraw()})}
 async function skEditor(){const j=cur,lk=locked(),s=lk?(j.sketch||{w:[],d:[],notes:''}):skGet(j);
  app.innerHTML=topbar('backSite',esc(site.condo||site.address||''),`Bldg ${esc(j.bldg)} · v${j.version}${site.type==='job'?' · WO '+esc(site.wo):''}`,lk?'':`<button class="btn sm" data-act="editForm">${t('details')}</button>`)+`
@@ -979,7 +990,9 @@ app.addEventListener('click',async e=>{const b=e.target.closest('[data-act]');if
  else if(a==='skSnap'&&!locked()){const s=skGet(cur);s.snap=!s.snap;skDraw();save()}
  else if(a==='skUndo'&&!locked()){const s=skGet(cur);if(skMode==='ds')s.d.pop();else{const w=s.w.pop();skStart=w&&skStart?w.a:null}skSel=null;skDraw();save()}
  else if(a==='skDel'&&!locked()&&skSel){const s=skGet(cur);(skSel.t==='w'?s.w:s.d).splice(skSel.i,1);skSel=null;skStart=null;skDraw();save()}
- else if(a==='skType'&&!locked()&&skSel&&skSel.t==='w'){const w=skGet(cur).w[skSel.i];w.t=b.dataset.t;skType=w.t;if(w.t!=='e')w.s=[];skDraw();save()}
+ else if(a==='skType'&&!locked()&&skSel&&skSel.t==='w'){const w=skGet(cur).w[skSel.i];w.t=b.dataset.t;skType=w.t;skDraw();save()}
+ else if(a==='skFl'&&!locked()&&skSel&&skSel.t==='w'){const w=skGet(cur).w[skSel.i];w.f=skFloors(b.dataset.f);skFl=w.f;skDraw();save()}
+ else if(a==='skDsFl'&&!locked()&&skSel&&skSel.t==='d'){const d=skGet(cur).d[skSel.i];d.f=skFloors(b.dataset.f);skDraw();save()}
  else if(a==='skSvc'&&!locked()&&skSel&&skSel.t==='w'){const w=skGet(cur).w[skSel.i],k=b.dataset.k;w.s=(w.s||[]).includes(k)?w.s.filter(x=>x!==k):[...(w.s||[]),k];skDraw();save()}
  else if(a==='skEl'&&!locked()&&skSel&&skSel.t==='d'){const d=skGet(cur).d[skSel.i],e2=b.dataset.e;d.e=e2?(d.e+e2).slice(0,8):d.e.slice(0,-1);skDraw();save()}
  else if(a==='skDir'&&!locked()&&skSel&&skSel.t==='d'){const d=skGet(cur).d[skSel.i];d.dir=d.dir===b.dataset.d?'':b.dataset.d;skDraw();save()}
