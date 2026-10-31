@@ -11,7 +11,7 @@
 <script>try{if(localStorage.getItem("ct_theme")==="sun")document.documentElement.setAttribute("data-theme","sun")}catch(e){}</script>
 <script type="module">
 import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword, sendEmailVerification }
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword, sendEmailVerification, validatePassword }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
   collection, query, where, orderBy, serverTimestamp, writeBatch, onSnapshot }
@@ -45,7 +45,7 @@ const inTenant = segs => {
 const tdoc = (d, ...segs) => doc(d, ...inTenant(segs));
 const tcol = (d, ...segs) => collection(d, ...inTenant(segs));
 window._fb = { auth, db, createUserWithEmailAndPassword, signInWithEmailAndPassword,
-  signOut, onAuthStateChanged, updatePassword, sendEmailVerification, doc: tdoc, setDoc, getDoc, getDocs, addDoc, updateDoc,
+  signOut, onAuthStateChanged, updatePassword, sendEmailVerification, validatePassword, doc: tdoc, setDoc, getDoc, getDocs, addDoc, updateDoc,
   deleteDoc, collection: tcol, query, where, orderBy, serverTimestamp, writeBatch, onSnapshot,
   initializeApp, getAuth, deleteApp, firebaseConfig,
   setTenant: t => { TID = t || null; }, tenant: () => TID };
@@ -116,6 +116,7 @@ body{font-family:'Barlow',system-ui,sans-serif;background:var(--bg);color:var(--
 .kpi-label{font-size:12px;color:var(--ink3);font-weight:600}
 .kpi-val{font-family:'JetBrains Mono',monospace;font-size:26px;font-weight:700;margin-top:4px;line-height:1.1}
 .kpi-sub{font-size:12px;color:var(--ink3);margin-top:4px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pw-rules{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;font-weight:600;color:var(--ink3);margin:6px 0 4px}.pw-rules .ok{color:var(--green)}
 .kpi.warn .kpi-val{color:var(--gold-d)}.kpi.bad .kpi-val{color:var(--red)}.kpi.good .kpi-val{color:var(--green)}
 .truck-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}
 .truck-row:last-child{border-bottom:none}
@@ -469,7 +470,7 @@ body.fp-open .app-foot{display:none}
         <label>Company name</label><input type="text" id="su-company" maxlength="120" placeholder="Your company LLC" autocomplete="organization">
         <label>Your name</label><input type="text" id="su-name" maxlength="80" placeholder="Full name" autocomplete="name">
         <label>Email</label><input type="email" id="su-email" placeholder="you@company.com" autocomplete="email">
-        <label>Password</label><input type="password" id="su-pass" placeholder="Min 10 characters" autocomplete="new-password">
+        <label>Password</label><input type="password" id="su-pass" placeholder="See the rules below" autocomplete="new-password">
         <label>Confirm password</label><input type="password" id="su-pass2" placeholder="Repeat password" autocomplete="new-password">
         <div id="su-err" class="alert a-err" style="display:none;margin-top:10px"><span class="ai">⚠️</span><span id="su-err-msg"></span></div>
         <button class="btn btn-gold btn-full" id="su-btn" style="margin-top:12px" onclick="doSignupCompany()">Create account →</button>
@@ -509,7 +510,7 @@ body.fp-open .app-foot{display:none}
         <label>Your Name</label>
         <input type="text" id="reg-name" placeholder="Full name">
         <label>Password</label>
-        <input type="password" id="reg-pass" placeholder="Min 6 characters">
+        <input type="password" id="reg-pass" placeholder="See the rules below" autocomplete="new-password">
         <label>Confirm Password</label>
         <input type="password" id="reg-pass2" placeholder="Repeat password">
         <div id="reg-err" class="alert a-err" style="display:none;margin-top:10px">
@@ -526,7 +527,7 @@ body.fp-open .app-foot{display:none}
         <div style="font-size:15px;font-weight:800;margin-bottom:6px">Create Your Password</div>
         <div style="font-size:13px;color:var(--ink3);margin-bottom:12px">Your manager created your account with a temporary password. Choose your own password to continue.</div>
         <label>New Password</label>
-        <input type="password" id="sp-pass" placeholder="Min 8 characters" autocomplete="new-password">
+        <input type="password" id="sp-pass" placeholder="See the rules below" autocomplete="new-password">
         <label>Confirm Password</label>
         <input type="password" id="sp-pass2" placeholder="Repeat password" autocomplete="new-password">
         <div id="sp-err" class="alert a-err" style="display:none;margin-top:10px">
@@ -972,7 +973,7 @@ body.fp-open .app-foot{display:none}
         <label>Employee ID (7 digits)</label><input type="text" id="cc-empid" placeholder="1234567" maxlength="7" inputmode="numeric">
         <label>Name</label><input type="text" id="cc-name" placeholder="Full name">
         <label>Temporary Password</label>
-        <div style="display:flex;gap:8px"><input type="text" id="cc-pass" style="flex:1;font-family:'JetBrains Mono',monospace" autocomplete="off"><button class="btn btn-outline btn-sm" type="button" onclick="el('cc-pass').value=genCode(10)">New</button></div>
+        <div style="display:flex;gap:8px"><input type="text" id="cc-pass" style="flex:1;font-family:'JetBrains Mono',monospace" autocomplete="off"><button class="btn btn-outline btn-sm" type="button" onclick="el('cc-pass').value=genTempPass();el('cc-pass').dispatchEvent(new Event('input'))">New</button></div>
         <label>Access</label>
         <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:14px;font-weight:600">
           <label style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" id="cc-app-ct" style="width:auto"> CrewTrack</label>
@@ -1285,7 +1286,7 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // Firestore document config/company, which only 29 Cyber edits, in the
 // Firebase console (the security rules block every write from the app).
 // No document = the app and its printed sheets show the 29 Cyber brand.
-const APP={name:'29Cyber CrewTrack',version:'3.0.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'3.0.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
   crewDomain:'crew.29cyber.internal'   // crew sign-in: <Employee ID>.<company code>@<crewDomain>
 };
@@ -1500,6 +1501,53 @@ async function doLogin(){
 //  A) The manager creates the account (createCrewAccount) with a temporary
 //     password; the crew member sets their own password at first login.
 const CODE_CHARS='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+// ═══ v3.0.1: passwords follow the Firebase password policy (set in the console) ═══
+// The app's own floor is 8 characters (10 for a company owner). The rest comes
+// from the policy, so changing it in the console changes the app too.
+let PW_POLICY=null;
+async function pwCheck(pw,floor=8){
+  pw=pw||'';
+  try{
+    const s=await fb().validatePassword(fb().auth,pw),o=(s.passwordPolicy&&s.passwordPolicy.customStrengthOptions)||{};PW_POLICY=o;
+    const min=Math.max(floor,o.minPasswordLength||0),items=[[`${min}+ characters`,pw.length>=min]];
+    if(o.containsUppercaseLetter)items.push(['Uppercase letter',!!s.containsUppercaseLetter]);
+    if(o.containsLowercaseLetter)items.push(['Lowercase letter',!!s.containsLowercaseLetter]);
+    if(o.containsNumericCharacter)items.push(['Number',!!s.containsNumericCharacter]);
+    if(o.containsNonAlphanumericCharacter)items.push(['Symbol (! @ # …)',!!s.containsNonAlphanumericCharacter]);
+    if(o.maxPasswordLength&&pw.length>o.maxPasswordLength)items.push([`At most ${o.maxPasswordLength} characters`,false]);
+    return{ok:items.every(x=>x[1]),items};
+  }catch(e){return{ok:pw.length>=floor,items:[[`${floor}+ characters`,pw.length>=floor]]};}
+}
+function pwMissing(r){return 'Password needs: '+r.items.filter(x=>!x[1]).map(x=>x[0].toLowerCase()).join(', ')+'.';}
+// Live checklist under a password field (turns green while typing).
+function pwWatch(id,floor=8){
+  const i=el(id);if(!i||i._pw)return;i._pw=true;
+  const box=document.createElement('div');box.className='pw-rules';box.id=id+'-rules';
+  (i.parentElement&&i.parentElement.style.display==='flex'?i.parentElement:i).insertAdjacentElement('afterend',box);
+  let n=0;const run=async()=>{const k=++n,r=await pwCheck(i.value,floor);if(k===n)box.innerHTML=r.items.map(([l,ok])=>`<span class="${ok?'ok':''}">${ok?'✓':'○'} ${h(l)}</span>`).join('');};
+  i.addEventListener('input',run);run();
+}
+// Temporary password that meets any policy: 12+ characters with every kind.
+function genTempPass(){
+  const sets=['ABCDEFGHJKLMNPQRSTUVWXYZ','abcdefghijkmnpqrstuvwxyz','23456789','!@#$%&*?-'],all=sets.join('');
+  const len=Math.max(12,(PW_POLICY&&PW_POLICY.minPasswordLength)||0),r=n=>{const a=new Uint32Array(1);crypto.getRandomValues(a);return a[0]%n;};
+  const c=sets.map(x=>x[r(x.length)]);while(c.length<len)c.push(all[r(all.length)]);
+  for(let k=c.length-1;k>0;k--){const j=r(k+1);[c[k],c[j]]=[c[j],c[k]];}
+  return c.join('');
+}
+// The real reason, instead of "check your connection".
+function authErr(e,fallback){
+  const c=(e&&e.code)||'';
+  if(c==='auth/password-does-not-meet-requirements')return 'The password does not meet the password rules.';
+  if(c==='auth/admin-restricted-operation'||c==='auth/operation-not-allowed')return 'New accounts are closed right now. Contact 29 Cyber.';
+  if(c==='auth/network-request-failed')return 'No connection. Check your internet and try again.';
+  if(c==='auth/too-many-requests')return 'Too many attempts. Wait a few minutes and try again.';
+  if(c==='auth/invalid-email')return 'This email address is not valid.';
+  if(c==='auth/weak-password')return 'This password is too weak.';
+  if(c==='auth/requires-recent-login')return 'Session expired. Sign out and sign in again, then try once more.';
+  if(/referer|api-key|app-not-authorized|unauthorized-domain|unauthorized-continue-uri/.test(c))return 'This site is not allowed to use the sign-in service. Contact 29 Cyber.';
+  return (fallback||'Something went wrong. Try again.')+(c?` (${c.replace('auth/','')})`:'');
+}
 function genCode(n=8){const a=new Uint32Array(n);crypto.getRandomValues(a);return Array.from(a,x=>CODE_CHARS[x%CODE_CHARS.length]).join('');}
 // v3.0: the company code is part of every crew login, so the same Employee ID can exist in two companies.
 let TENANT=null;
@@ -1519,7 +1567,7 @@ async function doRegister(){
   if(!/^\d{7}$/.test(empid)){showRegErr('ID must be 7 digits');return;}
   if(!/^[A-Z0-9]{8}$/.test(code)){showRegErr('Enter the 8-character invite code from your manager');return;}
   if(!name){showRegErr('Enter your name');return;}
-  if(pass.length<8){showRegErr('Password min 8 characters');return;}
+  {const pr=await pwCheck(pass);if(!pr.ok){showRegErr(pwMissing(pr));return;}}
   if(pass!==pass2){showRegErr('Passwords do not match');return;}
   const btn=el('reg-submit-btn');
   const reset=()=>{if(btn){btn.textContent='Create Account →';btn.disabled=false;}};
@@ -1530,7 +1578,7 @@ async function doRegister(){
     cred=await fb().createUserWithEmailAndPassword(fb().auth,crewEmail(empid,ccode),pass);
   }catch(e){
     registering=false;
-    showRegErr(e.code==='auth/email-already-in-use'?'This ID already has an account. Contact your manager.':'Could not create the account. Check your connection and try again.');
+    showRegErr(e.code==='auth/email-already-in-use'?'This ID already has an account. Contact your manager.':authErr(e,'Could not create the account.'));
     reset();return;
   }
   try{
@@ -1572,7 +1620,7 @@ async function createCrewAccount(){
   const empid=el('cc-empid').value.trim(),name=el('cc-name').value.trim().slice(0,60),pass=el('cc-pass').value.trim();
   if(!/^\d{7}$/.test(empid)){fail('ID must be 7 digits');return;}
   if(!name){fail('Enter the name');return;}
-  if(pass.length<8){fail('Temporary password min 8 characters');return;}
+  {const pr=await pwCheck(pass);if(!pr.ok){fail('Temporary password: '+pwMissing(pr).replace('Password needs: ','needs ')+' Tap New to make one.');return;}}
   const btn=el('cc-btn');btn.disabled=true;btn.textContent='Creating…';
   const done=()=>{btn.disabled=false;btn.textContent='+ Create Account';};
   let idDoc=null;
@@ -1599,7 +1647,7 @@ async function createCrewAccount(){
     await batch.commit();
     await F.signOut(tmpAuth);
     await writeAuditLog({type:'crew_account_created',empId:empid,targetUid:newUser.uid,method:'manager'});
-    el('cc-empid').value='';el('cc-name').value='';el('cc-pass').value=genCode(10);
+    el('cc-empid').value='';el('cc-name').value='';el('cc-pass').value=genTempPass();el('cc-pass').dispatchEvent(new Event('input'));
     if(el('cc-app-ct'))el('cc-app-ct').checked=false;if(el('cc-app-fp'))el('cc-app-fp').checked=false;
     await syncPeople();
     toast(`✅ Account created for ${name}`);
@@ -1609,7 +1657,7 @@ async function createCrewAccount(){
     if(newUser){try{await newUser.delete();}catch(_){}}
     fail(e.code==='auth/email-already-in-use'
       ?'A login for this ID already exists (from an old account). Delete it in Firebase Authentication, then try again.'
-      :'Could not create the account. Check your connection and try again.');
+      :authErr(e,'Could not create the account.'));
   }finally{
     if(tmpApp){try{await F.deleteApp(tmpApp);}catch(_){}}
     done();
@@ -1621,7 +1669,7 @@ async function doSetPassword(){
   const errBox=el('sp-err');errBox.style.display='none';
   const fail=m=>{el('sp-err-msg').textContent=m;errBox.style.display='flex';};
   const p1=el('sp-pass').value,p2=el('sp-pass2').value;
-  if(p1.length<8){fail('Password min 8 characters');return;}
+  {const pr=await pwCheck(p1);if(!pr.ok){fail(pwMissing(pr));return;}}
   if(p1!==p2){fail('Passwords do not match');return;}
   const user=fb().auth.currentUser;if(!user){showAuth('login');return;}
   const btn=el('sp-btn');btn.disabled=true;btn.textContent='Saving…';
@@ -1632,7 +1680,7 @@ async function doSetPassword(){
     session=null;
     await afterLogin(user);
   }catch(e){
-    fail(e.code==='auth/requires-recent-login'?'Session expired. Sign out and sign in again with the temporary password.':'Could not save the password. Try again.');
+    fail(e.code==='auth/requires-recent-login'?'Session expired. Sign out and sign in again with the temporary password.':authErr(e,'Could not save the password.'));
   }finally{btn.disabled=false;btn.textContent='Save Password →';}
 }
 
@@ -1663,7 +1711,7 @@ async function doSignupCompany(){
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){showSuErr('Enter a valid email');return;}
   const cur=fb().auth.currentUser;
   if(!(cur&&cur.email===email)){
-    if(p1.length<10){showSuErr('Password: at least 10 characters');return;}
+    const pr=await pwCheck(p1,10);if(!pr.ok){showSuErr(pwMissing(pr));return;}
     if(p1!==p2){showSuErr('Passwords do not match');return;}
   }
   const btn=el('su-btn');btn.disabled=true;btn.textContent='Creating…';
@@ -1675,7 +1723,7 @@ async function doSignupCompany(){
     registering=false;
     el('verify-email').textContent=email;showAuth('verify');
     if(user.emailVerified)finishCompanySignup();
-  }catch(e){registering=false;showSuErr(e.code==='auth/email-already-in-use'?'This email already has a login. Sign in with it (Manager / Boss), then start your company.':e.code==='auth/operation-not-allowed'?'Sign-ups are closed right now.':'Could not create the account. Check your connection.');}
+  }catch(e){registering=false;showSuErr(e.code==='auth/email-already-in-use'?'This email already has a login. Sign in with it (Manager / Boss), then start your company.':authErr(e,'Could not create the account.'));}
   finally{btn.disabled=false;btn.textContent='Create account →';}
 }
 async function resendVerify(){const u=fb().auth.currentUser;if(!u)return;try{await fb().sendEmailVerification(u);toast('📧 Link sent again');}catch(e){toast('Wait a minute and try again',true);}}
@@ -3567,7 +3615,7 @@ async function buildAdminSheets(){
 }
 
 async function buildAdminUsers(){
-  if(el('cc-pass')&&!el('cc-pass').value)el('cc-pass').value=genCode(10);
+  if(el('cc-pass')&&!el('cc-pass').value){el('cc-pass').value=genTempPass();el('cc-pass').dispatchEvent(new Event('input'));}
   el('users-active').innerHTML='<div class="spinner"></div>';
   try{
     const{orderBy}=fb();
@@ -3616,6 +3664,7 @@ async function buildAdminUsers(){
             <div style="font-size:11px;color:var(--ink3)">${h(u.empId?`ID: ${u.empId}`:u.email||'—')}${u.mustChangePassword?' · waiting for first sign-in':''}</div>
             ${appToggles(u)}
             ${(u.role==='manager'||u.role==='bigboss')?`<label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;margin-top:4px;color:var(--ink2)"><input type="checkbox" ${u.fieldWorker?'checked':''} ${session.role==='bigboss'?'':'disabled'} onchange="setFieldWorker(${ja(u.fid)},this.checked)" style="width:auto"> Also works in the field</label>`:''}
+            ${session.role==='bigboss'&&u.fid!==session.uid&&u.status==='approved'&&(u.role==='crew'||u.role==='manager')?`<button class="btn btn-outline btn-sm" style="margin-top:6px" onclick="setRole(${ja(u.fid)},${ja(u.name)},${ja(u.role==='crew'?'manager':'crew')})">${u.role==='crew'?'⬆ Make manager':'⬇ Make crew'}</button>`:''}
             ${u.status!=='approved'?`<div style="font-size:11px;color:var(--red);font-weight:700">⚠️ Status "${h(u.status||'missing')}" — fix to "approved" in Firebase</div>`:''}
           </div>
           ${u.fid!==session.uid?`<button class="btn btn-red btn-sm" onclick="removeUser(${ja(u.fid)},${ja(u.name)},${ja(u.empId||'')})">Remove</button>`:'<span style="font-size:11px;color:var(--ink3)">You</span>'}
@@ -3674,6 +3723,19 @@ async function approveUser(fid,name){
 // Frees the Employee ID with a NEW invite code, so the removed person cannot sign up
 // again with the old one. Their login stays in Firebase Authentication (deleting a
 // login needs a server); delete it there before giving the same ID to someone else.
+// v3.0.1: the bigboss promotes crew to manager (or back). Never their own role:
+// the rules refuse it. Managers cannot change roles at all.
+async function setRole(fid,name,role){
+  if(session?.role!=='bigboss'||fid===session.uid)return;
+  if(!confirm(role==='manager'?`Make ${name} a manager?\n\nManagers approve loads, create crew accounts, edit trucks and stock, and see every load.`:`Make ${name} crew again?\n\nThey lose manager access right away.`))return;
+  try{
+    await fbUpdate(`users/${fid}`,{role});
+    await writeAuditLog({type:'role_changed',targetUid:fid,role});
+    await syncPeople();
+    toast(role==='manager'?`✅ ${name} is now a manager`:`${name} is crew again`);
+    buildAdminUsers();
+  }catch(e){toast(e.code==='permission-denied'?'Not allowed (only the Big Boss, and not on their own role).':'Could not change the role.',true);}
+}
 async function releaseUser(fid,empId){
   {const{db,doc,writeBatch}=fb();const b=writeBatch(db);b.delete(doc(db,'users',fid));b.delete(doc(db,'members',fid));await b.commit();}
   if(!canWrite())return;   // after the trial: the login is removed; the Employee ID is freed when the plan is active
@@ -4396,6 +4458,7 @@ function sendVia(method){
 applyBrand();
 {const c=lsCompany();if(c){if(el('li-company'))el('li-company').value=c;if(el('reg-company'))el('reg-company').value=c;}}
 document.addEventListener('fbReady',()=>{
+  pwWatch('su-pass',10);pwWatch('reg-pass');pwWatch('sp-pass');pwWatch('cc-pass');
   const{auth,onAuthStateChanged}=fb();
   onAuthStateChanged(auth,async user=>{
     if(registering)return; // a sign-up is in progress; doRegister handles the screens
