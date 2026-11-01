@@ -1700,7 +1700,7 @@ function canWrite(){const i=trialInfo();return !i||!!i.active||!!i.trial;}
 // record, so it opens a few seconds after paying. paidUntil + 3 days mirrors the rules.
 const STRIPE_LINK='https://buy.stripe.com/test_6oUfZhafDcYMg311FRbbG00';
 // Stripe customer portal (cancel, card, receipts). Empty = button hidden.
-const PORTAL_LINK='';
+const PORTAL_LINK='https://billing.stripe.com/p/login/test_6oUfZhafDcYMg311FRbbG00';
 const GRACE_DAYS=3;
 const okEmail=e=>/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)&&!/@crew\.29cyber\.internal$/.test(e);
 const myEmail=()=>(fb().auth.currentUser&&fb().auth.currentUser.email)||'';
