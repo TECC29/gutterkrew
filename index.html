@@ -1286,7 +1286,7 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // Firestore document config/company, which only 29 Cyber edits, in the
 // Firebase console (the security rules block every write from the app).
 // No document = the app and its printed sheets show the 29 Cyber brand.
-const APP={name:'29Cyber CrewTrack',version:'3.0.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'3.0.2',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
   crewDomain:'crew.29cyber.internal'   // crew sign-in: <Employee ID>.<company code>@<crewDomain>
 };
@@ -1690,6 +1690,13 @@ async function doSetPassword(){
 function trialKey(e){const a=String(e||'').toLowerCase().split('@'),dom=a[a.length-1];let loc=a[0].split('+')[0];if(dom==='gmail.com'||dom==='googlemail.com')return loc.replace(/\./g,'')+'@gmail.com';return loc+'@'+dom;}
 // The company accepts writes (trial running or active). After the trial: read-only.
 function canWrite(){const i=trialInfo();return !i||!!i.active||!!i.trial;}
+// v3.0.2: subscription by Stripe Payment Link. The card is typed on Stripe's page only;
+// the link carries the company code (client_reference_id) so 29 Cyber knows who paid.
+// Activation stays server-side (29 Cyber in the console, later a Cloud Function).
+const STRIPE_LINK='https://buy.stripe.com/test_6oUfZhafDcYMg311FRbbG00';
+function subscribeUrl(){const u=new URL(STRIPE_LINK);if(TENANT&&/^[A-Z0-9]{6}$/.test(TENANT.code||''))u.searchParams.set('client_reference_id',TENANT.code);const e=(fb().auth.currentUser&&fb().auth.currentUser.email)||'';if(/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)&&!/@crew\.29cyber\.internal$/.test(e))u.searchParams.set('prefilled_email',e);return u.toString()}
+function subscribeHTML(){if(session?.role!=='bigboss')return `<div style="font-size:12px;margin-top:6px">Ask your Big Boss to subscribe.</div>`;
+  return `<div style="margin-top:8px"><a class="btn btn-gold btn-sm" href="${h(subscribeUrl())}" target="_blank" rel="noopener noreferrer">Subscribe</a><div style="font-size:12px;margin-top:6px">Secure payment by Stripe. After paying, 29 Cyber activates your company within one business day.</div></div>`}
 function trialInfo(){if(!TENANT)return null;if(TENANT.plan==='active')return{active:true};
   const start=TENANT.createdAt?tsDate(TENANT.createdAt):null;if(!start||isNaN(start))return{closed:true};
   const end=TENANT.trialEndsAt?tsDate(TENANT.trialEndsAt):new Date(start.getTime()+21*864e5),left=Math.ceil((end-Date.now())/864e5);
@@ -1697,8 +1704,8 @@ function trialInfo(){if(!TENANT)return null;if(TENANT.plan==='active')return{act
 function renderPlanBanner(){
   const b=el('plan-banner');if(!b)return;
   const i=trialInfo();
-  b.innerHTML=!session||!i||i.active?'':i.trial?`<div class="alert a-info" style="margin-bottom:12px"><span class="ai">⏳</span><div>Free trial: <b>${i.left} day${i.left>1?'s':''} left</b>. Company code <b style="font-family:'JetBrains Mono',monospace">${h(TENANT.code||'')}</b>.</div></div>`
-    :`<div class="alert a-err" style="margin-bottom:12px"><span class="ai">🔒</span><div><b>Trial ended: read-only.</b> Your records and PDFs stay available. To keep working, contact 29 Cyber.</div></div>`;
+  b.innerHTML=!session||!i||i.active?'':i.trial?`<div class="alert a-info" style="margin-bottom:12px"><span class="ai">⏳</span><div>Free trial: <b>${i.left} day${i.left>1?'s':''} left</b>. Company code <b style="font-family:'JetBrains Mono',monospace">${h(TENANT.code||'')}</b>.${i.left<=7?subscribeHTML():''}</div></div>`
+    :`<div class="alert a-err" style="margin-bottom:12px"><span class="ai">🔒</span><div><b>Trial ended: read-only.</b> Your records and PDFs stay available. Subscribe to keep working.${subscribeHTML()}</div></div>`;
 }
 function showSuErr(m){el('su-err').style.display='flex';el('su-err-msg').textContent=m;}
 let pendingCompany=null;
@@ -1761,7 +1768,7 @@ async function finishCompanySignup(){
 async function buildCompanyTab(){
   const v=el('admin-company-view');if(!v)return;const c=await fbGet('config/company').catch(()=>null)||{},i=trialInfo()||{};
   v.innerHTML=`<div class="card"><div style="font-size:13px;font-weight:700;margin-bottom:4px">Company</div>
-    <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">Company code (crew sign-in): <b style="font-family:'JetBrains Mono',monospace;font-size:14px">${h(TENANT?.code||'—')}</b> · Plan: ${i.active?'Active':i.trial?`Trial, ${i.left} day${i.left>1?'s':''} left`:'Trial ended (read-only)'}</div>
+    <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">Company code (crew sign-in): <b style="font-family:'JetBrains Mono',monospace;font-size:14px">${h(TENANT?.code||'—')}</b> · Plan: ${i.active?'Active':i.trial?`Trial, ${i.left} day${i.left>1?'s':''} left`:'Trial ended (read-only)'}</div>${i.active?'':subscribeHTML()}
     ${session?.role==='bigboss'?`<label>Company name</label><input id="co-name" maxlength="120" value="${h(c.name||'')}">
     <label>Name on printed sheets</label><input id="co-print" maxlength="120" value="${h(c.printName||'')}">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div><label>Phone</label><input id="co-phone" maxlength="40" value="${h(c.phone||'')}"></div><div><label>Email</label><input id="co-email" type="email" maxlength="120" value="${h(c.email||'')}"></div></div>
