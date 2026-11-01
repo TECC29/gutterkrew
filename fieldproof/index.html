@@ -148,7 +148,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc,
-  collection, query, where, orderBy, serverTimestamp, writeBatch }
+  collection, query, where, orderBy, serverTimestamp, writeBatch, onSnapshot }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 // Same Firebase project as CrewTrack. v3.0: one project, many companies (tenants).
 const firebaseConfig = {
@@ -173,7 +173,7 @@ const inTenant = segs => {
 };
 window._fb = { auth, db, signInWithEmailAndPassword, signOut, onAuthStateChanged,
   doc: (d, ...g) => doc(d, ...inTenant(g)), setDoc, getDoc, getDocs, updateDoc, deleteDoc,
-  collection: (d, ...g) => collection(d, ...inTenant(g)), query, where, orderBy, serverTimestamp, writeBatch,
+  collection: (d, ...g) => collection(d, ...inTenant(g)), query, where, orderBy, serverTimestamp, writeBatch, onSnapshot,
   setTenant: t => { TID = t || null; }, tenant: () => TID };
 window._fbReady = true;
 document.dispatchEvent(new Event('fbReady'));
@@ -282,15 +282,30 @@ function arm(b,fn){if(b.dataset.armed==='1'){fn();return}b.dataset.armed='1';con
 // fpSites/{id}           site visit (type 'visit', author + managers only) or job (type 'job', managers create)
 // fpSites/{id}/proofs     one signed verification per building version (locked once signed)
 // fpSites/{id}/photos     compressed site photos (immutable)
-const APP={name:'29Cyber FieldProof',version:'3.2.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber FieldProof',version:'3.2.2',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={crewDomain:'crew.29cyber.internal'};
 let TENANT=null;
 const normCode=v=>String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
 function lsCompany(v){try{if(v===undefined)return localStorage.getItem('ct_company')||'';localStorage.setItem('ct_company',v);}catch(e){return '';}}
 // Trial: 21 days from the creation time stamped by the server (the rules enforce it).
-function planInfo(){if(!TENANT)return null;if(TENANT.plan==='active')return{active:true};const st=TENANT.createdAt?tsDate(TENANT.createdAt):null;if(!st||isNaN(st))return{closed:true};
+// v3.2.2: paid plans (Stripe) carry paidUntil; open until paidUntil + 3 days, like the rules.
+function planInfo(){if(!TENANT)return null;
+  if(TENANT.plan==='active'){if(!('paidUntil' in TENANT))return{active:true};const v=TENANT.paidUntil,pu=v&&typeof v.toDate==='function'?v.toDate():v&&typeof v.seconds==='number'?new Date(v.seconds*1000):null;return pu&&!isNaN(pu)&&Date.now()<pu.getTime()+3*864e5?{active:true}:{closed:true,ended:true};}
+  if(TENANT.plan!=='trial')return{closed:true,ended:TENANT.plan==='canceled'};
+  const st=TENANT.createdAt?tsDate(TENANT.createdAt):null;if(!st||isNaN(st))return{closed:true};
   const end=TENANT.trialEndsAt?tsDate(TENANT.trialEndsAt):new Date(st.getTime()+21*864e5),left=Math.ceil((end-Date.now())/864e5);return left>0?{trial:true,left}:{closed:true};}
-const planBar=()=>{const i=planInfo();return !i||i.active?'':i.trial?`<p class="hint" style="margin:0 0 10px">Free trial: ${i.left} day${i.left>1?'s':''} left.</p>`:`<p class="banner gray" style="margin:0 0 10px">Trial ended: read-only. Your signed records and PDFs stay available. To keep working, your Big Boss subscribes in CrewTrack (Admin › Company).</p>`;};
+// v3.2.2: the company record is watched live: a payment in CrewTrack opens FieldProof too.
+let tenantUnsub=null;
+function stopTenantWatch(){if(tenantUnsub){try{tenantUnsub()}catch(e){}tenantUnsub=null}}
+function startTenantWatch(tid){stopTenantWatch();
+  try{const{db,doc,onSnapshot}=fb();
+    tenantUnsub=onSnapshot(doc(db,'tenants',tid),snap=>{
+      if(!TENANT||TENANT.tid!==tid||!snap.exists())return;
+      const k=JSON.stringify(planInfo());TENANT={tid,...snap.data()};
+      if(JSON.stringify(planInfo())!==k&&session&&!cur&&!site)home();   // refresh the home list and its banner
+    },e=>console.log('company watch:',e&&e.code));
+  }catch(e){console.log('company watch:',e)}}
+const planBar=()=>{const i=planInfo();return !i||i.active?'':i.trial?`<p class="hint" style="margin:0 0 10px">Free trial: ${i.left} day${i.left>1?'s':''} left.</p>`:`<p class="banner gray" style="margin:0 0 10px">${i.ended?'Subscription ended':'Trial ended'}: read-only. Your signed records and PDFs stay available. To keep working, your Big Boss subscribes in CrewTrack (Admin › Company).</p>`;};
 const L={en:Object.assign({newJob:"New job",editJob:"Job details",jobs:"Jobs",noJobs:"No jobs yet. Create the first one when you reach the site.",duplicate:"Duplicate layout",del:"Delete",confirm:"Confirm",address:"Address",condo:"Community",wo:"Work order",bldg:"Building #",model:"Building model",supervisor:"Supervisor",installer:"Installer (you)",notes:"Job notes",gpsBtn:"Capture GPS",gpsNone:"GPS not captured (optional)",gpsWait:"Getting position…",gpsFail:"GPS isn't available here. The address fields are enough.",dictHint:"Tip: use the keyboard mic to dictate.",saveForm:"Save and build",back:"Back",details:"Details",addPhoto:"Photo",photo:"Photo",photoName:"Photo name",delPhoto:"Delete photo",zoom:"Zoom",emptyPhoto:"Take or choose the first photo of the site.",bom:"Materials",bomEmpty:"No pieces placed.",review:"Review and sign",viewDoc:"View document",locked:"Job signed. The layout is locked.",flip:"Flip",size:"Size",arrow:"Arrow",qty:"Qty",otherName:"Material name",noteP:"Piece note",remove:"Remove piece",close:"Close",summary:"Summary",pieceNotes:"Piece notes",none:"None",supSig:"Supervisor signature",instSig:"Your signature",name:"Name",clear:"Clear",finalize:"Sign and finalize",stmt:"The supervisor confirms the downspout locations, elbows, drains, splash blocks and materials in this document are what was requested for this building.",needWo:"Fill in work order and building number.",needAddr:"Fill in the address or the community.",needSig:"Both names and both signatures are required.",needPieces:"Place at least one piece before signing.",signedAt:"Signed",integrity:"Integrity code (SHA-256)",pdf:"Download PDF",email:"Open email",pdfMaking:"Building PDF…",pdfOk:"PDF saved. Attach it to the email.",pdfNo:"Downloads aren't available in this view.",pdfErr:"The PDF couldn't be built.",bossEmail:"Boss email (for sending)",storeWarn:"This browser didn't allow saving on the device. Jobs are lost when the page closes.",draft:"Draft",signed:"Signed",other:"Other material",drain:"Drain",yourName:"Your name",enter:"Sign in",contAs:"Continue as",switchU:"Switch user",testMode:"Test mode: sign in without a password.",tagline:"Installation locations, verified and signed on site.",logout:"Sign out",needName:"Enter your name to sign in.",curColor:"Current color (next pieces)",colorPh:"e.g. white, brown",color:"Color",kickerEl:"Kicker elbows",note:"Free text",noteText:"Text",photoNotes:"Text on photos",textPh:"Write here"},{
   tagline:"Installation locations, verified and signed on site.",
   supSig:"Site supervisor signature",instSig:"Your signature",supervisor:"Site supervisor",installer:"Verified by (you)",
@@ -370,7 +385,7 @@ async function doLogin(){
 function notice(icon,title,text,extra=''){
   app.innerHTML=`<section class="gate">${LOGO_SVG}<div class="lform" style="text-align:center"><div style="font-size:40px">${icon}</div><h2 style="margin:6px 0">${esc(title)}</h2><p class="tag" style="margin:0 auto 18px">${text}</p>${extra}<button class="btn line big" data-act="logout">Sign out</button></div>${foot()}</section>`;}
 async function onUser(user){
-  if(!user){session=null;TENANT=null;fb().setTenant(null);gate();return}
+  if(!user){stopTenantWatch();session=null;TENANT=null;fb().setTenant(null);gate();return}
   // v3.0: the company of this login first.
   const mem=await fbGet(`members/${user.uid}`).catch(()=>null);
   if(!mem||!mem.tid){fb().setTenant(null);notice('🏢','No company','This login is not part of a company. Start one in CrewTrack, or ask your manager to add you.',`<a class="btn vis big" href="../index.html">Open CrewTrack</a>`);return}
@@ -383,6 +398,7 @@ async function onUser(user){
   session={uid:user.uid,...p};
   try{RAWCO=await fbGet('config/company');CUSTOMER=cleanCompany(RAWCO);}catch(e){RAWCO=null;CUSTOMER=null}
   try{const c=await fbGet('config/fieldproof');WOLINK=!c||c.woLink!==false;}catch(e){WOLINK=true}
+  startTenantWatch(TENANT.tid);
   const hs=hashSite();if(hs){clearHash();openSite(hs);}else home();
 }
 // CrewTrack opens a job with fieldproof/index.html?embed=1#site=ID ("Open job plan").

@@ -1286,7 +1286,7 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // Firestore document config/company, which only 29 Cyber edits, in the
 // Firebase console (the security rules block every write from the app).
 // No document = the app and its printed sheets show the 29 Cyber brand.
-const APP={name:'29Cyber CrewTrack',version:'3.0.2',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'3.1.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
   crewDomain:'crew.29cyber.internal'   // crew sign-in: <Employee ID>.<company code>@<crewDomain>
 };
@@ -1367,7 +1367,10 @@ function queueOffline(type,data){
   saveOfflineQueue(q);
 }
 
-async function syncOfflineQueue(){
+// v3.1.0: one sync at a time (sign-in, back online and the company watch can all ask for it).
+let _syncP=null;
+function syncOfflineQueue(){if(_syncP)return _syncP;_syncP=_syncOfflineQueueRun().finally(()=>{_syncP=null;});return _syncP;}
+async function _syncOfflineQueueRun(){
   const q=getOfflineQueue();
   if(!q.length) return;
   const remaining=[];
@@ -1691,21 +1694,119 @@ function trialKey(e){const a=String(e||'').toLowerCase().split('@'),dom=a[a.leng
 // The company accepts writes (trial running or active). After the trial: read-only.
 function canWrite(){const i=trialInfo();return !i||!!i.active||!!i.trial;}
 // v3.0.2: subscription by Stripe Payment Link. The card is typed on Stripe's page only;
-// the link carries the company code (client_reference_id) so 29 Cyber knows who paid.
-// Activation stays server-side (29 Cyber in the console, later a Cloud Function).
+// the link carries the company code (client_reference_id) so the payment finds its company.
+// v3.1.0: activation is automatic. A Cloud Function receives Stripe's signed message and
+// sets the plan (the app never can: the rules refuse it). The app watches the company
+// record, so it opens a few seconds after paying. paidUntil + 3 days mirrors the rules.
 const STRIPE_LINK='https://buy.stripe.com/test_6oUfZhafDcYMg311FRbbG00';
-function subscribeUrl(){const u=new URL(STRIPE_LINK);if(TENANT&&/^[A-Z0-9]{6}$/.test(TENANT.code||''))u.searchParams.set('client_reference_id',TENANT.code);const e=(fb().auth.currentUser&&fb().auth.currentUser.email)||'';if(/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)&&!/@crew\.29cyber\.internal$/.test(e))u.searchParams.set('prefilled_email',e);return u.toString()}
+// Stripe customer portal (cancel, card, receipts). Empty = button hidden.
+const PORTAL_LINK='';
+const GRACE_DAYS=3;
+const okEmail=e=>/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)&&!/@crew\.29cyber\.internal$/.test(e);
+const myEmail=()=>(fb().auth.currentUser&&fb().auth.currentUser.email)||'';
+// v3.1.0: the payment carries the company code plus a random key only the bigboss can
+// read (tenants/{tid}/payKey/key). The Stripe function applies a payment only when both
+// match, so knowing the company code (every crew login has it) is not enough.
+let PAYKEY=null,payKeyErr=false;
+function randomKey(n=24){const A='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';let out='';
+  while(out.length<n){const b=crypto.getRandomValues(new Uint8Array(n*2));for(const x of b){if(x<248&&out.length<n)out+=A[x%62];}}return out;}
+let _payKeyP=null;
+function ensurePayKey(){
+  if(session?.role!=='bigboss'||!TENANT)return Promise.resolve(null);
+  if(PAYKEY)return Promise.resolve(PAYKEY);
+  if(!_payKeyP)_payKeyP=(async()=>{
+    const read=async()=>{const k=await fbGet('payKey/key');return k&&/^[A-Za-z0-9]{24}$/.test(k.token||'')?k.token:null;};
+    try{
+      let t=await read();
+      if(!t){const{db,doc,setDoc,serverTimestamp}=fb();const n=randomKey();
+        try{await setDoc(doc(db,'payKey','key'),{token:n,at:serverTimestamp()});t=n;}
+        catch(e){t=await read();if(!t)throw e;}}   // another phone created it first
+      PAYKEY=t;payKeyErr=false;
+    }catch(e){console.log('pay key:',e&&e.code);payKeyErr=true;}
+    return PAYKEY;
+  })().finally(()=>{_payKeyP=null;});
+  return _payKeyP;
+}
+function subscribeUrl(){const u=new URL(STRIPE_LINK);if(TENANT&&/^[A-Z0-9]{6}$/.test(TENANT.code||'')&&PAYKEY)u.searchParams.set('client_reference_id',TENANT.code+'_'+PAYKEY);const e=myEmail();if(okEmail(e))u.searchParams.set('prefilled_email',e);return u.toString()}
+function portalUrl(){if(!PORTAL_LINK)return '';const u=new URL(PORTAL_LINK);const e=myEmail();if(okEmail(e))u.searchParams.set('prefilled_email',e);return u.toString()}
 function subscribeHTML(){if(session?.role!=='bigboss')return `<div style="font-size:12px;margin-top:6px">Ask your Big Boss to subscribe.</div>`;
-  return `<div style="margin-top:8px"><a class="btn btn-gold btn-sm" href="${h(subscribeUrl())}" target="_blank" rel="noopener noreferrer">Subscribe</a><div style="font-size:12px;margin-top:6px">Secure payment by Stripe. After paying, 29 Cyber activates your company within one business day.</div></div>`}
-function trialInfo(){if(!TENANT)return null;if(TENANT.plan==='active')return{active:true};
+  if(!PAYKEY){if(!payKeyErr)ensurePayKey().then(()=>{renderPlanBanner();const a=document.querySelector('#s-admin.active');if(a&&el('admin-company-view')&&el('admin-company-view').offsetParent)adminTab('company');});
+    return `<div style="font-size:12px;margin-top:8px">${payKeyErr?`Could not prepare the payment link. Check your connection and <a href="#" onclick="payKeyErr=false;renderPlanBanner();return false">try again</a>.`:'Preparing the payment link…'}</div>`;}
+  return `<div style="margin-top:8px"><a class="btn btn-gold btn-sm" href="${h(subscribeUrl())}" target="_blank" rel="noopener noreferrer">Subscribe</a><div style="font-size:12px;margin-top:6px">Secure payment by Stripe. Your company opens automatically a few seconds after paying. Subscribing ends the free trial.</div></div>`}
+function manageHTML(){if(session?.role!=='bigboss'||!PORTAL_LINK)return '';
+  return `<a class="btn btn-ghost btn-sm" href="${h(portalUrl())}" target="_blank" rel="noopener noreferrer">Manage subscription</a><div style="font-size:12px;margin-top:6px">Cancel, change the card or download receipts on Stripe's page. Sign in there with this email.</div>`}
+const TIER_NAME={solo:'Solo',crew:'Crew',company:'Company'};
+const fmtDay=d=>d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+// A real Firestore time stamp, or null (anything else fails closed, like the rules).
+const tsOf=v=>v&&typeof v.toDate==='function'?v.toDate():v&&typeof v.seconds==='number'?new Date(v.seconds*1000):null;
+function trialInfo(){if(!TENANT)return null;
+  if(TENANT.plan==='active'){
+    if(!('paidUntil' in TENANT))return{active:true};   // set by 29 Cyber in the console
+    const pu=tsOf(TENANT.paidUntil);if(!pu||isNaN(pu))return{closed:true,ended:true};
+    const graceEnd=new Date(pu.getTime()+GRACE_DAYS*864e5);
+    if(Date.now()>=graceEnd.getTime())return{closed:true,ended:true,end:pu};
+    return{active:true,paid:true,paidUntil:pu,graceEnd,pastDue:TENANT.billingStatus==='past_due'||Date.now()>=pu.getTime(),cancel:!!TENANT.cancelAtPeriodEnd,tier:TENANT.planTier,max:TENANT.maxPeople};}
+  if(TENANT.plan==='canceled')return{closed:true,ended:true};
+  if(TENANT.plan!=='trial')return{closed:true};
   const start=TENANT.createdAt?tsDate(TENANT.createdAt):null;if(!start||isNaN(start))return{closed:true};
   const end=TENANT.trialEndsAt?tsDate(TENANT.trialEndsAt):new Date(start.getTime()+21*864e5),left=Math.ceil((end-Date.now())/864e5);
   return left>0?{trial:true,left,end}:{closed:true,end};}
+function planLine(i){if(!i)return '';if(i.active){if(!i.paid)return 'Active';
+    const t=TIER_NAME[i.tier]?`${TIER_NAME[i.tier]}${i.max?`, up to ${Number(i.max)|0} people`:''}`:'';
+    return `Active${t?` (${t})`:''} · ${i.pastDue?`<b>payment failed</b>, update the card by ${fmtDay(i.graceEnd)}`:i.cancel?`ends on ${fmtDay(i.paidUntil)}`:`renews on ${fmtDay(i.paidUntil)}`}`;}
+  return i.trial?`Trial, ${i.left} day${i.left>1?'s':''} left`:i.ended?'Subscription ended (read-only)':'Trial ended (read-only)';}
+// After paying on Stripe: show "activating" until the company record says active.
+const PAY_KEY='ct_paying';
+// Set only when Stripe sends the buyer back after a successful payment (?paid=1).
+function markPaying(){try{localStorage.setItem(PAY_KEY,String(Date.now()));}catch(e){}}
+function payingSince(){let t=0;try{t=+(localStorage.getItem(PAY_KEY)||0);}catch(e){}return t&&Date.now()-t<30*60e3?t:0;}
+function clearPaying(){try{localStorage.removeItem(PAY_KEY);}catch(e){}}
+(function(){try{const u=new URL(location.href);if(u.searchParams.get('paid')==='1'){markPaying();u.searchParams.delete('paid');history.replaceState(null,'',u.pathname+(u.search||'')+u.hash);}}catch(e){}})();
+// Re-check when the trial or the paid time runs out while the app stays open.
+let planTimer=null;
+function schedulePlanCheck(i){if(planTimer){clearTimeout(planTimer);planTimer=null;}if(!session||!i)return;
+  const at=[i.graceEnd,i.paidUntil,i.trial?i.end:null].filter(d=>d&&d.getTime()>Date.now()).map(d=>d.getTime());
+  if(!at.length)return;const ms=Math.min(...at)-Date.now()+1000;if(ms>20*864e5)return;
+  planTimer=setTimeout(()=>{const before=canWrite();renderPlanBanner();if(before&&!canWrite())toast('🔒 Read-only now. Your records stay available.',true);},ms);}
 function renderPlanBanner(){
   const b=el('plan-banner');if(!b)return;
-  const i=trialInfo();
-  b.innerHTML=!session||!i||i.active?'':i.trial?`<div class="alert a-info" style="margin-bottom:12px"><span class="ai">⏳</span><div>Free trial: <b>${i.left} day${i.left>1?'s':''} left</b>. Company code <b style="font-family:'JetBrains Mono',monospace">${h(TENANT.code||'')}</b>.${i.left<=7?subscribeHTML():''}</div></div>`
-    :`<div class="alert a-err" style="margin-bottom:12px"><span class="ai">🔒</span><div><b>Trial ended: read-only.</b> Your records and PDFs stay available. Subscribe to keep working.${subscribeHTML()}</div></div>`;
+  const i=trialInfo();schedulePlanCheck(i);
+  if(!session||!i){b.innerHTML='';return;}
+  const since=payingSince();
+  if(since&&!i.active){
+    const slow=Date.now()-since>3*60e3;
+    b.innerHTML=`<div class="alert a-info" style="margin-bottom:12px"><span class="ai">⏳</span><div><b>Payment received. Activating your company…</b> This usually takes a few seconds and opens by itself.${slow?` Still waiting after a few minutes? Check that the payment went through on Stripe's receipt email, or write to <a href="mailto:fabio@29cyber.com">fabio@29cyber.com</a>.`:''}</div></div>`;return;}
+  if(i.active){
+    if(i.paid&&i.pastDue){b.innerHTML=`<div class="alert a-warn" style="margin-bottom:12px"><span class="ai">💳</span><div><b>The last payment failed.</b> Update the card by <b>${fmtDay(i.graceEnd)}</b> to keep working.${session.role==='bigboss'?(PORTAL_LINK?`<div style="margin-top:8px">${manageHTML()}</div>`:''):' Ask your Big Boss.'}</div></div>`;return;}
+    b.innerHTML='';return;}
+  b.innerHTML=i.trial?`<div class="alert a-info" style="margin-bottom:12px"><span class="ai">⏳</span><div>Free trial: <b>${i.left} day${i.left>1?'s':''} left</b>. Company code <b style="font-family:'JetBrains Mono',monospace">${h(TENANT.code||'')}</b>.${i.left<=7?subscribeHTML():''}</div></div>`
+    :`<div class="alert a-err" style="margin-bottom:12px"><span class="ai">🔒</span><div><b>${i.ended?'Subscription ended':'Trial ended'}: read-only.</b> Your records and PDFs stay available. ${TENANT.billingStatus==='past_due'&&PORTAL_LINK&&session.role==='bigboss'?`The last payment failed: update the card to reopen.<div style="margin-top:8px">${manageHTML()}</div><div style="font-size:12px;margin-top:6px">Or start a new subscription:</div>`:'Subscribe to keep working.'}${subscribeHTML()}</div></div>`;
+}
+// The company record is watched live: a payment, a cancellation or a declined card
+// shows up on every phone of the company without signing in again.
+let tenantUnsub=null;
+function stopTenantWatch(){if(tenantUnsub){try{tenantUnsub();}catch(e){}tenantUnsub=null;}}
+function startTenantWatch(tid){
+  stopTenantWatch();
+  try{const{db,doc,onSnapshot}=fb();
+    tenantUnsub=onSnapshot(doc(db,'tenants',tid),snap=>{
+      if(!TENANT||TENANT.tid!==tid)return;
+      const d=snap.exists()?snap.data():null;if(!d)return;
+      const before=canWrite(),wasActive=!!trialInfo()?.active;
+      TENANT={tid,...d};
+      const nowActive=!!trialInfo()?.active;
+      if(nowActive&&payingSince())clearPaying();
+      renderPlanBanner();
+      if(nowActive&&!wasActive)toast('✅ Your company is active. Thank you!');
+      if(before!==canWrite()){
+        if(canWrite())syncOfflineQueue().catch(()=>{});
+        // Rebuild only the Dashboard; a form in progress is never wiped.
+        const cur=document.querySelector('.screen.active');
+        if(cur&&cur.id==='s-dash')showScreen('s-dash');
+        else if(canWrite())toast('You can save again. Reopen the screen if a button is still off.');
+      }
+    },err=>console.log('company watch:',err&&err.code));
+  }catch(e){console.log('company watch:',e);}
 }
 function showSuErr(m){el('su-err').style.display='flex';el('su-err-msg').textContent=m;}
 let pendingCompany=null;
@@ -1768,7 +1869,7 @@ async function finishCompanySignup(){
 async function buildCompanyTab(){
   const v=el('admin-company-view');if(!v)return;const c=await fbGet('config/company').catch(()=>null)||{},i=trialInfo()||{};
   v.innerHTML=`<div class="card"><div style="font-size:13px;font-weight:700;margin-bottom:4px">Company</div>
-    <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">Company code (crew sign-in): <b style="font-family:'JetBrains Mono',monospace;font-size:14px">${h(TENANT?.code||'—')}</b> · Plan: ${i.active?'Active':i.trial?`Trial, ${i.left} day${i.left>1?'s':''} left`:'Trial ended (read-only)'}</div>${i.active?'':subscribeHTML()}
+    <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">Company code (crew sign-in): <b style="font-family:'JetBrains Mono',monospace;font-size:14px">${h(TENANT?.code||'—')}</b> · Plan: ${planLine(i)}</div>${i.active?(i.paid?`<div style="margin:4px 0 10px">${manageHTML()}</div>`:''):subscribeHTML()}
     ${session?.role==='bigboss'?`<label>Company name</label><input type="text" id="co-name" maxlength="120" value="${h(c.name||'')}">
     <label>Name on printed sheets</label><input type="text" id="co-print" maxlength="120" value="${h(c.printName||'')}">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div><label>Phone</label><input type="text" id="co-phone" maxlength="40" value="${h(c.phone||'')}"></div><div><label>Email</label><input id="co-email" type="email" maxlength="120" value="${h(c.email||'')}"></div></div>
@@ -1804,7 +1905,7 @@ async function _afterLogin(user){
     // v3.0: which company this login belongs to, then its record (plan, trial, code).
     const mem=await fbGet(`members/${user.uid}`).catch(()=>null);
     if(!mem||!mem.tid){
-      fb().setTenant(null);TENANT=null;showScreen('s-auth');
+      stopTenantWatch();PAYKEY=null;payKeyErr=false;fb().setTenant(null);TENANT=null;showScreen('s-auth');
       if(user.email&&!String(user.email).endsWith('@'+COMPANY.crewDomain)){
         if(!user.emailVerified){el('verify-email').textContent=user.email;showAuth('verify');}else showAuth('nocompany');
       }else{await fb().signOut(fb().auth);showLiErr('This login is not part of a company.');}
@@ -1841,7 +1942,8 @@ async function _afterLogin(user){
     el('tb-role').textContent=ROLES[session.role]||session.role;
     document.body.classList.add('authed');
     el('side-name').textContent=session.name;el('side-role').textContent=ROLES[session.role]||session.role;
-    renderPlanBanner();
+    renderPlanBanner();startTenantWatch(TENANT.tid);
+    if(session.role==='bigboss')ensurePayKey().then(renderPlanBanner);
     if(session.role==='manager'||session.role==='bigboss'){
       el('bn-admin').style.display='flex';
     } else {
@@ -1880,7 +1982,7 @@ async function _afterLogin(user){
 
 async function doLogout(){
   {const f=el('fp-frame');if(f)f.removeAttribute('src');document.body.classList.remove('fp-open');}
-  stopNotesWatch();session=null;CUSTOMER=null;TENANT=null;try{fb().setTenant(null);}catch(e){}renderPlanBanner();applyBrand();todayLoad=null;todayJobs=[];crewList=[];pickedCrew=[];PEOPLE=[];myActive=null;selColors=[];extraMats=[];fpItems=[];recipients=[];
+  stopNotesWatch();stopTenantWatch();PAYKEY=null;payKeyErr=false;if(planTimer){clearTimeout(planTimer);planTimer=null;}session=null;CUSTOMER=null;TENANT=null;try{fb().setTenant(null);}catch(e){}renderPlanBanner();applyBrand();todayLoad=null;todayJobs=[];crewList=[];pickedCrew=[];PEOPLE=[];myActive=null;selColors=[];extraMats=[];fpItems=[];recipients=[];
   try{await fb().signOut(fb().auth);}catch(e){}
   document.body.classList.remove('authed','nav-open');
   if(el('bell-btn'))el('bell-btn').style.display='none';
