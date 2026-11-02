@@ -1286,7 +1286,7 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // Firestore document config/company, which only 29 Cyber edits, in the
 // Firebase console (the security rules block every write from the app).
 // No document = the app and its printed sheets show the 29 Cyber brand.
-const APP={name:'29Cyber CrewTrack',version:'3.2.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'3.2.1',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
   crewDomain:'crew.29cyber.internal'   // crew sign-in: <Employee ID>.<company code>@<crewDomain>
 };
@@ -1703,16 +1703,17 @@ function canWrite(){const i=trialInfo();return !i||!!i.active||!!i.trial;}
 // v3.1.0: activation is automatic. A Cloud Function receives Stripe's signed message and
 // sets the plan (the app never can: the rules refuse it). The app watches the company
 // record, so it opens a few seconds after paying. paidUntil + 3 days mirrors the rules.
-const STRIPE_LINK='https://buy.stripe.com/test_6oUfZhafDcYMg311FRbbG00';   // fallback (v3.1)
+const STRIPE_LINK='https://buy.stripe.com/8x24gzbiM3hG3AXfS85sA02';   // fallback: Crew (live)
 // Stripe customer portal (cancel, card, receipts). Empty = button hidden.
-const PORTAL_LINK='https://billing.stripe.com/p/login/test_6oUfZhafDcYMg311FRbbG00';
+const PORTAL_LINK='https://billing.stripe.com/p/login/4gM3cvaeI2dC6N9dK05sA00';   // live
 const GRACE_DAYS=3;
 // v3.2.0: people per plan. tenants/{tid}/seats/count {n,last} counts active logins
 // (pending sign-ups count once approved). Every create/approve/remove moves it by one
 // in the same batch; the rules refuse anything above the plan (same numbers as here).
 const PLANS=[{tier:'solo',name:'Solo',price:'$39',max:2},{tier:'crew',name:'Crew',price:'$129',max:10},{tier:'company',name:'Company',price:'$249',max:25}];
 // One Stripe Payment Link per plan. Empty = that plan is not offered yet.
-const STRIPE_LINKS={solo:'',crew:'https://buy.stripe.com/test_6oUfZhafDcYMg311FRbbG00',company:''};
+// v3.2.1: live Stripe (real payments).
+const STRIPE_LINKS={solo:'https://buy.stripe.com/bJe14nfz29G41sP6hy5sA01',crew:'https://buy.stripe.com/8x24gzbiM3hG3AXfS85sA02',company:'https://buy.stripe.com/4gM3cvaeI2dC6N9dK05sA00'};
 function seatLimit(){if(!TENANT)return 0;if(TENANT.plan==='trial')return 25;if(!('maxPeople' in TENANT))return Infinity;
   return Number.isInteger(TENANT.maxPeople)&&TENANT.maxPeople>0?TENANT.maxPeople:0;}
 async function readSeats(){try{const s=await fbGet('seats/count');return s&&Number.isInteger(s.n)?s.n:null;}catch(e){return null;}}
