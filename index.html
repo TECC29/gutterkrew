@@ -1286,7 +1286,7 @@ const ROLES={bigboss:'👑 Big Boss',manager:'👩‍💼 Manager',crew:'👷 Cr
 // Firestore document config/company, which only 29 Cyber edits, in the
 // Firebase console (the security rules block every write from the app).
 // No document = the app and its printed sheets show the 29 Cyber brand.
-const APP={name:'29Cyber CrewTrack',version:'3.1.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
+const APP={name:'29Cyber CrewTrack',version:'3.2.0',author:'Fábio Almeida',vendor:'Twenty Nine Cyber LLC'};
 const COMPANY={
   crewDomain:'crew.29cyber.internal'   // crew sign-in: <Employee ID>.<company code>@<crewDomain>
 };
@@ -1629,6 +1629,10 @@ async function createCrewAccount(){
   let idDoc=null;
   try{idDoc=await fbGet(`employeeIds/${empid}`);}catch(e){fail('Could not check the ID. Check your connection.');done();return;}
   if(idDoc&&idDoc.used){fail('This ID already has an account.');done();return;}
+  // v3.2.0: check the plan before creating the login (no login without a profile).
+  const seatN=await readSeats();
+  if(seatN===null){fail(NO_COUNTER);done();return;}
+  if(seatN>=seatLimit()){fail(seatsFullMsg(seatLimit()));done();return;}
   const F=fb();
   let tmpApp=null,newUser=null;
   try{
@@ -1647,7 +1651,8 @@ async function createCrewAccount(){
     });
     if(idDoc)batch.update(doc(db,'employeeIds',empid),{used:true,assignedTo:name,assignedUid:newUser.uid});
     else batch.set(doc(db,'employeeIds',empid),{name,used:true,assignedTo:name,assignedUid:newUser.uid,createdAt:now,createdBy:session.name});
-    await batch.commit();
+    batch.update(doc(db,'seats','count'),{n:seatN+1,last:newUser.uid});
+    await batch.commit();SEATS_N=seatN+1;
     await F.signOut(tmpAuth);
     await writeAuditLog({type:'crew_account_created',empId:empid,targetUid:newUser.uid,method:'manager'});
     el('cc-empid').value='';el('cc-name').value='';el('cc-pass').value=genTempPass();el('cc-pass').dispatchEvent(new Event('input'));
@@ -1698,10 +1703,21 @@ function canWrite(){const i=trialInfo();return !i||!!i.active||!!i.trial;}
 // v3.1.0: activation is automatic. A Cloud Function receives Stripe's signed message and
 // sets the plan (the app never can: the rules refuse it). The app watches the company
 // record, so it opens a few seconds after paying. paidUntil + 3 days mirrors the rules.
-const STRIPE_LINK='https://buy.stripe.com/test_6oUfZhafDcYMg311FRbbG00';
+const STRIPE_LINK='https://buy.stripe.com/test_6oUfZhafDcYMg311FRbbG00';   // fallback (v3.1)
 // Stripe customer portal (cancel, card, receipts). Empty = button hidden.
 const PORTAL_LINK='https://billing.stripe.com/p/login/test_6oUfZhafDcYMg311FRbbG00';
 const GRACE_DAYS=3;
+// v3.2.0: people per plan. tenants/{tid}/seats/count {n,last} counts active logins
+// (pending sign-ups count once approved). Every create/approve/remove moves it by one
+// in the same batch; the rules refuse anything above the plan (same numbers as here).
+const PLANS=[{tier:'solo',name:'Solo',price:'$39',max:2},{tier:'crew',name:'Crew',price:'$129',max:10},{tier:'company',name:'Company',price:'$249',max:25}];
+// One Stripe Payment Link per plan. Empty = that plan is not offered yet.
+const STRIPE_LINKS={solo:'',crew:'https://buy.stripe.com/test_6oUfZhafDcYMg311FRbbG00',company:''};
+function seatLimit(){if(!TENANT)return 0;if(TENANT.plan==='trial')return 25;if(!('maxPeople' in TENANT))return Infinity;
+  return Number.isInteger(TENANT.maxPeople)&&TENANT.maxPeople>0?TENANT.maxPeople:0;}
+async function readSeats(){try{const s=await fbGet('seats/count');return s&&Number.isInteger(s.n)?s.n:null;}catch(e){return null;}}
+const seatsFullMsg=lim=>`Your plan allows ${lim} people. Remove someone or move to a bigger plan (Admin › Company).`;
+const NO_COUNTER='Your company needs a one-time update before adding people (it runs every night). Try again tomorrow, or contact fabio@29cyber.com.';
 const okEmail=e=>/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)&&!/@crew\.29cyber\.internal$/.test(e);
 const myEmail=()=>(fb().auth.currentUser&&fb().auth.currentUser.email)||'';
 // v3.1.0: the payment carries the company code plus a random key only the bigboss can
@@ -1727,12 +1743,18 @@ function ensurePayKey(){
   })().finally(()=>{_payKeyP=null;});
   return _payKeyP;
 }
-function subscribeUrl(){const u=new URL(STRIPE_LINK);if(TENANT&&/^[A-Z0-9]{6}$/.test(TENANT.code||'')&&PAYKEY)u.searchParams.set('client_reference_id',TENANT.code+'_'+PAYKEY);const e=myEmail();if(okEmail(e))u.searchParams.set('prefilled_email',e);return u.toString()}
+function subscribeUrl(tier){const link=STRIPE_LINKS[tier||'crew']||STRIPE_LINK;const u=new URL(link);if(TENANT&&/^[A-Z0-9]{6}$/.test(TENANT.code||'')&&PAYKEY)u.searchParams.set('client_reference_id',TENANT.code+'_'+PAYKEY);const e=myEmail();if(okEmail(e))u.searchParams.set('prefilled_email',e);return u.toString()}
 function portalUrl(){if(!PORTAL_LINK)return '';const u=new URL(PORTAL_LINK);const e=myEmail();if(okEmail(e))u.searchParams.set('prefilled_email',e);return u.toString()}
 function subscribeHTML(){if(session?.role!=='bigboss')return `<div style="font-size:12px;margin-top:6px">Ask your Big Boss to subscribe.</div>`;
   if(!PAYKEY){if(!payKeyErr)ensurePayKey().then(()=>{renderPlanBanner();const a=document.querySelector('#s-admin.active');if(a&&el('admin-company-view')&&el('admin-company-view').offsetParent)adminTab('company');});
     return `<div style="font-size:12px;margin-top:8px">${payKeyErr?`Could not prepare the payment link. Check your connection and <a href="#" onclick="payKeyErr=false;renderPlanBanner();return false">try again</a>.`:'Preparing the payment link…'}</div>`;}
-  return `<div style="margin-top:8px"><a class="btn btn-gold btn-sm" href="${h(subscribeUrl())}" target="_blank" rel="noopener noreferrer">Subscribe</a><div style="font-size:12px;margin-top:6px">Secure payment by Stripe. Your company opens automatically a few seconds after paying. Subscribing ends the free trial.</div></div>`}
+  const n=SEATS_N;
+  const btns=PLANS.filter(p=>STRIPE_LINKS[p.tier]).map(p=>{const fits=n==null||n<=p.max;
+    return fits?`<a class="btn btn-gold btn-sm" href="${h(subscribeUrl(p.tier))}" target="_blank" rel="noopener noreferrer" style="margin:0 6px 6px 0">Subscribe · ${p.name} ${p.price}/mo · up to ${p.max}</a>`
+      :`<span class="btn btn-ghost btn-sm" style="margin:0 6px 6px 0;opacity:.5;cursor:not-allowed" title="You have ${n} people">${p.name} · up to ${p.max} (you have ${n})</span>`;}).join('');
+  return `<div style="margin-top:8px">${btns}<div style="font-size:12px;margin-top:4px">${n!=null?`Your company has ${n} ${n===1?'person':'people'}. `:''}Secure payment by Stripe. Your company opens automatically a few seconds after paying. Subscribing ends the free trial.</div></div>`}
+let SEATS_N=null;
+async function refreshSeats(){if(!session||!['manager','bigboss'].includes(session.role))return null;const n=await readSeats();if(n!==SEATS_N){SEATS_N=n;renderPlanBanner();}return n;}
 function manageHTML(){if(session?.role!=='bigboss'||!PORTAL_LINK)return '';
   return `<a class="btn btn-ghost btn-sm" href="${h(portalUrl())}" target="_blank" rel="noopener noreferrer">Manage subscription</a><div style="font-size:12px;margin-top:6px">Cancel, change the card or download receipts on Stripe's page. Sign in there with this email.</div>`}
 const TIER_NAME={solo:'Solo',crew:'Crew',company:'Company'};
@@ -1753,7 +1775,7 @@ function trialInfo(){if(!TENANT)return null;
   return left>0?{trial:true,left,end}:{closed:true,end};}
 function planLine(i){if(!i)return '';if(i.active){if(!i.paid)return 'Active';
     const t=TIER_NAME[i.tier]?`${TIER_NAME[i.tier]}${i.max?`, up to ${Number(i.max)|0} people`:''}`:'';
-    return `Active${t?` (${t})`:''} · ${i.pastDue?`<b>payment failed</b>, update the card by ${fmtDay(i.graceEnd)}`:i.cancel?`ends on ${fmtDay(i.paidUntil)}`:`renews on ${fmtDay(i.paidUntil)}`}`;}
+    return `Active${t?` (${t})`:''}${SEATS_N!=null&&i.max?` · ${SEATS_N} of ${Number(i.max)|0} people`:''} · ${i.pastDue?`<b>payment failed</b>, update the card by ${fmtDay(i.graceEnd)}`:i.cancel?`ends on ${fmtDay(i.paidUntil)}`:`renews on ${fmtDay(i.paidUntil)}`}`;}
   return i.trial?`Trial, ${i.left} day${i.left>1?'s':''} left`:i.ended?'Subscription ended (read-only)':'Trial ended (read-only)';}
 // After paying on Stripe: show "activating" until the company record says active.
 const PAY_KEY='ct_paying';
@@ -1778,6 +1800,8 @@ function renderPlanBanner(){
     b.innerHTML=`<div class="alert a-info" style="margin-bottom:12px"><span class="ai">⏳</span><div><b>Payment received. Activating your company…</b> This usually takes a few seconds and opens by itself.${slow?` Still waiting after a few minutes? Check that the payment went through on Stripe's receipt email, or write to <a href="mailto:fabio@29cyber.com">fabio@29cyber.com</a>.`:''}</div></div>`;return;}
   if(i.active){
     if(i.paid&&i.pastDue){b.innerHTML=`<div class="alert a-warn" style="margin-bottom:12px"><span class="ai">💳</span><div><b>The last payment failed.</b> Update the card by <b>${fmtDay(i.graceEnd)}</b> to keep working.${session.role==='bigboss'?(PORTAL_LINK?`<div style="margin-top:8px">${manageHTML()}</div>`:''):' Ask your Big Boss.'}</div></div>`;return;}
+    const lim=seatLimit();
+    if(SEATS_N!=null&&isFinite(lim)&&SEATS_N>lim&&['manager','bigboss'].includes(session.role)){b.innerHTML=`<div class="alert a-warn" style="margin-bottom:12px"><span class="ai">👥</span><div>Your company has <b>${SEATS_N} people</b>; the plan allows <b>${lim}</b>. Nobody was removed, but new people cannot be added until you remove someone or move to a bigger plan.</div></div>`;return;}
     b.innerHTML='';return;}
   b.innerHTML=i.trial?`<div class="alert a-info" style="margin-bottom:12px"><span class="ai">⏳</span><div>Free trial: <b>${i.left} day${i.left>1?'s':''} left</b>. Company code <b style="font-family:'JetBrains Mono',monospace">${h(TENANT.code||'')}</b>.${i.left<=7?subscribeHTML():''}</div></div>`
     :`<div class="alert a-err" style="margin-bottom:12px"><span class="ai">🔒</span><div><b>${i.ended?'Subscription ended':'Trial ended'}: read-only.</b> Your records and PDFs stay available. ${TENANT.billingStatus==='past_due'&&PORTAL_LINK&&session.role==='bigboss'?`The last payment failed: update the card to reopen.<div style="margin-top:8px">${manageHTML()}</div><div style="font-size:12px;margin-top:6px">Or start a new subscription:</div>`:'Subscribe to keep working.'}${subscribeHTML()}</div></div>`;
@@ -1856,6 +1880,7 @@ async function finishCompanySignup(){
       b.set(doc(db,'users',u.uid),{name:pendingCompany.name,email:u.email,role:'bigboss',status:'approved',registeredAt:new Date().toISOString(),apps:{crewtrack:true,fieldproof:true}});
       b.set(doc(db,'config','company'),{name:pendingCompany.company,printName:pendingCompany.company,phone:'',email:'',address:''});
       b.set(doc(db,'trialEmails',trialKey(u.email)),{tid,at:now});
+      b.set(doc(db,'seats','count'),{n:1,last:u.uid});   // v3.2.0: the owner is person 1
       try{await b.commit();ok=true;lsCompany(code);}catch(e){last=e;F.setTenant(null);}
     }
     if(!ok){fail(last&&last.code==='permission-denied'?'This email already used its free trial, or already belongs to a company. Contact 29 Cyber.':'Could not create the company. Check your connection and try again.');return;}
@@ -1944,6 +1969,7 @@ async function _afterLogin(user){
     el('side-name').textContent=session.name;el('side-role').textContent=ROLES[session.role]||session.role;
     renderPlanBanner();startTenantWatch(TENANT.tid);
     if(session.role==='bigboss')ensurePayKey().then(renderPlanBanner);
+    refreshSeats();
     if(session.role==='manager'||session.role==='bigboss'){
       el('bn-admin').style.display='flex';
     } else {
@@ -1982,7 +2008,7 @@ async function _afterLogin(user){
 
 async function doLogout(){
   {const f=el('fp-frame');if(f)f.removeAttribute('src');document.body.classList.remove('fp-open');}
-  stopNotesWatch();stopTenantWatch();PAYKEY=null;payKeyErr=false;if(planTimer){clearTimeout(planTimer);planTimer=null;}session=null;CUSTOMER=null;TENANT=null;try{fb().setTenant(null);}catch(e){}renderPlanBanner();applyBrand();todayLoad=null;todayJobs=[];crewList=[];pickedCrew=[];PEOPLE=[];myActive=null;selColors=[];extraMats=[];fpItems=[];recipients=[];
+  stopNotesWatch();stopTenantWatch();SEATS_N=null;PAYKEY=null;payKeyErr=false;if(planTimer){clearTimeout(planTimer);planTimer=null;}session=null;CUSTOMER=null;TENANT=null;try{fb().setTenant(null);}catch(e){}renderPlanBanner();applyBrand();todayLoad=null;todayJobs=[];crewList=[];pickedCrew=[];PEOPLE=[];myActive=null;selColors=[];extraMats=[];fpItems=[];recipients=[];
   try{await fb().signOut(fb().auth);}catch(e){}
   document.body.classList.remove('authed','nav-open');
   if(el('bell-btn'))el('bell-btn').style.display='none';
@@ -3735,6 +3761,9 @@ async function buildAdminUsers(){
     const approved=users.filter(u=>u.status!=='pending');
 
     let html='';
+    {const n=await refreshSeats(),lim=seatLimit();
+     html+=`<div style="font-size:13px;font-weight:700;margin-bottom:10px" id="seats-line">👥 ${n!=null?n:approved.length}${isFinite(lim)?` of ${lim}`:''} people${pending.length?` · ${pending.length} waiting for approval (they count once approved)`:''}</div>`;
+     if(n!=null&&isFinite(lim)&&n>=lim)html+=`<div class="alert a-warn" style="margin-bottom:10px"><span class="ai">👥</span><div>${h(seatsFullMsg(lim))}</div></div>`;}
 
     // Pending users — shown first with prominent approve/reject
     if(pending.length){
@@ -3823,7 +3852,13 @@ async function setFieldWorker(fid,on){
 }
 async function approveUser(fid,name){
   try{
-    await fbUpdate(`users/${fid}`,{status:'approved',approvedBy:session.name,approvedAt:new Date().toISOString()});
+    const n=await readSeats();
+    if(n===null){toast(NO_COUNTER,true);return;}
+    if(n>=seatLimit()){toast(seatsFullMsg(seatLimit()),true);return;}
+    const{db,doc,writeBatch}=fb();const b=writeBatch(db);
+    b.update(doc(db,'users',fid),{status:'approved',approvedBy:session.name,approvedAt:new Date().toISOString()});
+    b.update(doc(db,'seats','count'),{n:n+1,last:fid});
+    await b.commit();SEATS_N=n+1;renderPlanBanner();
     toast(`✅ ${name} approved — can now log in`);
     await syncPeople();buildAdminUsers();
   }catch(e){toast('Error approving user',true);}
@@ -3846,7 +3881,12 @@ async function setRole(fid,name,role){
   }catch(e){toast(e.code==='permission-denied'?'Not allowed (only the Big Boss, and not on their own role).':'Could not change the role.',true);}
 }
 async function releaseUser(fid,empId){
-  {const{db,doc,writeBatch}=fb();const b=writeBatch(db);b.delete(doc(db,'users',fid));b.delete(doc(db,'members',fid));await b.commit();}
+  {const{db,doc,writeBatch}=fb();const b=writeBatch(db);
+   // v3.2.0: an active person frees their seat in the same batch (pending ones never took one).
+   const u=await fbGet(`users/${fid}`).catch(()=>null),n=await readSeats();
+   b.delete(doc(db,'users',fid));b.delete(doc(db,'members',fid));
+   if(u&&u.status!=='pending'&&n!==null)b.update(doc(db,'seats','count'),{n:n-1,last:fid});
+   await b.commit();if(u&&u.status!=='pending'&&n!==null){SEATS_N=n-1;renderPlanBanner();}}
   if(!canWrite())return;   // after the trial: the login is removed; the Employee ID is freed when the plan is active
   if(empId){
     try{await fbUpdate(`employeeIds/${empId}`,{used:false,assignedTo:'',assignedUid:'',inviteCode:genCode(8)});}
